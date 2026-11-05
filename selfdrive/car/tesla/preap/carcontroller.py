@@ -13,8 +13,6 @@ import time
 from opendbc.can.packer import CANPacker
 from openpilot.selfdrive.car.interfaces import CarControllerBase
 from openpilot.selfdrive.car.tesla.preap.calib import (
-  apply_calibration_result,
-  compute_calibration,
   is_pedal_calibrated,
   pedal_can_bus,
   pedal_long_allowed,
@@ -44,9 +42,6 @@ class PreApCarController(CarControllerBase):
     self.tesla_can = TeslaCAN(self.packer, self.pt_packer)
     self.pedal_counter = PedalCommandCounter()
     self.pedal_bus = pedal_can_bus()
-    self._calib_coast = None
-    self._calib_frames_coast = 0
-    self._calib_press = None
     self.stock_cc = StockCCSpoofer()
     self.long_ctrl = PreAPLongController(self.pedal_counter, pedal_can_bus)
 
@@ -57,32 +52,13 @@ class PreApCarController(CarControllerBase):
     self._read_vin_was_on = False
 
   def _update_detection_and_calib(self, CS) -> bool:
-    """Mirror PedalDetected; run armed two-step calib from CS samples."""
+    """Mirror PedalDetected."""
     detected = bool(getattr(CS, "preap_pedal_detected", False))
     set_bool(PreApParamKeys.PEDAL_DETECTED, detected)
 
-    if get_bool(PreApParamKeys.PEDAL_CALIB_ARMED) and detected:
-      raw = getattr(CS, "preap_pedal_raw", None)
-      if raw is not None:
-        if self._calib_coast is None:
-          if getattr(CS.out, "gasPressed", False):
-            self._calib_frames_coast = 0
-          else:
-            self._calib_frames_coast += 1
-            if self._calib_frames_coast >= 20:
-              self._calib_coast = float(raw)
-        elif self._calib_press is None:
-          if float(raw) > float(self._calib_coast) + 5.0:
-            self._calib_press = float(raw)
-            result = compute_calibration(self._calib_coast, self._calib_press)
-            apply_calibration_result(result)
-            self._calib_coast = None
-            self._calib_press = None
-            self._calib_frames_coast = 0
-    else:
-      self._calib_coast = None
-      self._calib_press = None
-      self._calib_frames_coast = 0
+    # Calibration lives in preap/calibrate_pedal.py; a UI arm no longer captures anything.
+    if get_bool(PreApParamKeys.PEDAL_CALIB_ARMED):
+      set_bool(PreApParamKeys.PEDAL_CALIB_ARMED, False)
 
     return detected
 
