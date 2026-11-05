@@ -18,16 +18,23 @@ ButtonType = car.CarState.ButtonEvent.Type
 DOUBLE_PULL_WINDOW_MS = 400
 
 
+def preap_steer_drop(hands_on_level: int, eac_status: int, eac_error_code: int) -> bool:
+  """Same conditions as the 0x370 handler in safety_tesla_preap.h."""
+  return hands_on_level >= 3 or (eac_status == 0 and 6 <= eac_error_code <= 9)
+
+
 class DoublePullEngagement:
   def __init__(self):
     self.pending = False
     self.lat_only = False
+    self.long_latched = False
     self.last_pull_ms = -10_000
     self._swallow_release = False
 
   def reset(self):
     self.pending = False
     self.lat_only = False
+    self.long_latched = False
     self.last_pull_ms = -10_000
     self._swallow_release = False
 
@@ -49,8 +56,9 @@ class DoublePullEngagement:
 
     # Brake drops longitudinal intent; lat_only / AOL keeps lateral.
     # (OP disable itself comes from card pedalPressed → USER_DISABLE.)
-    if brake_pressed and self.lat_only is False and self.pending is False:
-      pass  # long already off via pedalPressed; nothing to clear here
+    if brake_pressed and self.long_latched:
+      self.long_latched = False
+      self.lat_only = True
 
     out = []
     for be in button_events:
@@ -70,12 +78,14 @@ class DoublePullEngagement:
           # Second pull within window — keep event; release will buttonEnable.
           self.pending = False
           self.lat_only = False
+          self.long_latched = True
           self._swallow_release = False
           out.append(be)
         else:
           # First pull — lateral only; swallow press + matching release.
           self.pending = True
           self.lat_only = True
+          self.long_latched = False
           self._swallow_release = True
       else:
         if self._swallow_release:

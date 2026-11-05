@@ -18,7 +18,7 @@ from openpilot.selfdrive.car.tesla.preap.pedal_feedback import PedalFeedback
 from openpilot.selfdrive.car.tesla.preap.cruise import (
   pedal_cruise_available, remap_preap_pedal_button_type, is_preap_cancel_echo,
 )
-from openpilot.selfdrive.car.tesla.preap.engagement import DoublePullEngagement
+from openpilot.selfdrive.car.tesla.preap.engagement import DoublePullEngagement, preap_steer_drop
 from openpilot.selfdrive.car.interfaces import CarStateBase
 from opendbc.can.parser import CANParser
 from opendbc.can.can_define import CANDefine
@@ -276,6 +276,11 @@ class CarState(CarStateBase):
         brake_pressed=bool(ret.brakePressed),
         cancel=cancel_pressed,
       )
+      # The panda drops controls on these, so the latch must not outlive them.
+      self.preap_panda_drop = preap_steer_drop(self.hands_on_level, int(epas_status["EPAS_eacStatus"]),
+                                               int(epas_status["EPAS_eacErrorCode"]))
+      if self.preap_panda_drop or ret.gearShifter != car.CarState.GearShifter.drive:
+        self.double_pull.reset()
       self.pedal_cruise_lat_only = bool(dp_on and self.double_pull.lat_only)
     ret.buttonEvents = buttonEvents
 

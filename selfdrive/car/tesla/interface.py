@@ -120,6 +120,8 @@ class CarInterface(CarInterfaceBase):
         events.add(car.CarEvent.EventName.steerOverride)
       events = self._ap1_hso_events(events)
       events = self._ap1_epas_inhibit_alert(events, c, ret)
+    if self.CP.carFingerprint == CAR.TESLA_PREAP_MODELS and getattr(self.CS, "preap_panda_drop", False):
+      events.add(car.CarEvent.EventName.buttonCancel)
     ret.events = events.to_msg()
 
     return ret, fp_ret
