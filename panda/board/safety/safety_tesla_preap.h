@@ -295,6 +295,8 @@ static void tesla_preap_gtw_emulation(const CANPacket_t *to_fwd) {
 
 
 
+static bool preap_lever_engage_prev = false;
+
 static void tesla_preap_rx_hook(const CANPacket_t *msg) {
   // Pedal sensor may be on bus 0 or 2.
   if (preap_enable_pedal && (msg->addr == 0x552U)) {
@@ -365,6 +367,10 @@ static void tesla_preap_rx_hook(const CANPacket_t *msg) {
     int lever = GET_BYTE(msg, 0) & 0x3FU;
     if (lever == 2) {
       if ((preap_gear == 4) && !preap_doors_open) {
+        // controls_allowed can drop without clearing cruise_engaged_prev; a new pull must re-arm.
+        if (!preap_lever_engage_prev) {
+          cruise_engaged_prev = false;
+        }
         pcm_cruise_check(true);
         preap_last_stalk_engage_us = microsecond_timer_get();
       }
@@ -374,6 +380,7 @@ static void tesla_preap_rx_hook(const CANPacket_t *msg) {
         pcm_cruise_check(false);
       }
     }
+    preap_lever_engage_prev = (lever == 2);
   }
 
   generic_rx_checks(false);
@@ -498,6 +505,7 @@ static safety_config tesla_preap_init(uint16_t param) {
 
   preap_gear = 4;
   preap_gear_prev = 4;
+  preap_lever_engage_prev = false;
   preap_doors_open = false;
   preap_pedal_can = -1;
   preap_last_stalk_engage_us = 0;
