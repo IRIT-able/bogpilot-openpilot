@@ -109,7 +109,7 @@ class CarInterface(CarInterfaceBase):
       events = self.create_common_events(
         ret,
         pcm_enable=False,
-        enable_buttons=(ButtonType.setCruise, ButtonType.accelCruise, ButtonType.decelCruise),
+        enable_buttons=(ButtonType.setCruise,),  # panda arms on pull only; up/down would desync it
       )
     else:
       events = self.create_common_events(ret)
