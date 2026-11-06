@@ -11,13 +11,14 @@ from openpilot.selfdrive.car.interfaces import RadarInterfaceBase
 
 
 class RadarInterface(RadarInterfaceBase):
+  _preap_frozen = FrozenTrackFilter()  # one radar per process
+
   def __init__(self, CP):
     super().__init__(CP)
     self.CP = CP
     self.updated_messages = set()
     self.track_id = 0
     self._preap_radar_offset_m = 0.0
-    self._preap_frozen = FrozenTrackFilter()
     self._preap_radar_upside_down = False
     self.rcp = None
     self.num_points = 0
