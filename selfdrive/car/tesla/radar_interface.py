@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
+import time
+
 from cereal import car
 from opendbc.can.parser import CANParser
 from openpilot.selfdrive.car.tesla.values import CAR, DBC, CANBUS
 from openpilot.selfdrive.car.tesla.preap.params import PreApParamKeys, get_bool, get_float
+from openpilot.selfdrive.car.tesla.preap.radar_filter import FrozenTrackFilter
 from openpilot.selfdrive.car.tesla.preap.radar_donor_vin import feed_can_strings as _feed_radar_vin_can
 from openpilot.selfdrive.car.interfaces import RadarInterfaceBase
 
@@ -14,6 +17,7 @@ class RadarInterface(RadarInterfaceBase):
     self.updated_messages = set()
     self.track_id = 0
     self._preap_radar_offset_m = 0.0
+    self._preap_frozen = FrozenTrackFilter()
     self._preap_radar_upside_down = False
     self.rcp = None
     self.num_points = 0
@@ -99,7 +103,14 @@ class RadarInterface(RadarInterfaceBase):
       if not msg_a['Tracked']:
         if i in self.pts:
           del self.pts[i]
+        self._preap_frozen.forget(i)
         continue
+
+      if self.CP.carFingerprint == CAR.TESLA_PREAP_MODELS:
+        raw = (msg_a['LongDist'], msg_a['LatDist'], msg_a['LongSpeed'], msg_a['LongAccel'], msg_b['LatSpeed'])
+        if not self._preap_frozen.keep(i, raw, time.monotonic()):
+          self.pts.pop(i, None)
+          continue
 
       # New track!
       if i not in self.pts:
