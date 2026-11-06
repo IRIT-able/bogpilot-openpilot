@@ -63,3 +63,34 @@ def test_cancel_clears_latch():
 def test_steer_drop_matches_panda_conditions():
   assert preap_steer_drop(3, 1, 0) and preap_steer_drop(0, 0, 9)
   assert not preap_steer_drop(2, 1, 0) and not preap_steer_drop(0, 1, 9) and not preap_steer_drop(0, 0, 5)
+
+
+def _chime(lat, long, prev):
+  from openpilot.selfdrive.car.tesla.preap.hud import update_preap_chimes
+  return update_preap_chimes(lat_engaged=lat, long_engaged=long, prev=prev)
+
+
+def test_single_pull_then_cancel_gives_lat_edges_only():
+  from openpilot.selfdrive.car.tesla.preap.hud import PreAPChimeState
+  c, p = _chime(True, False, PreAPChimeState())
+  assert c.lat_engage and not c.long_engage
+  c, p = _chime(True, False, p)
+  assert not any(c)
+  c, p = _chime(False, False, p)
+  assert c.lat_disengage and not c.long_disengage
+
+
+def test_second_pull_and_brake_only_change_long():
+  from openpilot.selfdrive.car.tesla.preap.hud import PreAPChimeState
+  _, p = _chime(True, False, PreAPChimeState())
+  c, p = _chime(True, True, p)
+  assert c.long_engage and not c.lat_engage
+  c, p = _chime(True, False, p)
+  assert c.long_disengage and not c.lat_disengage
+
+
+def test_lat_chime_events_are_defined_with_sounds():
+  from openpilot.selfdrive.controls.lib.events import AudibleAlert, ET, FROGPILOT_EVENTS, FrogPilotEventName
+  on = FROGPILOT_EVENTS[FrogPilotEventName.pedalLatEnabled][ET.PERMANENT]
+  off = FROGPILOT_EVENTS[FrogPilotEventName.pedalLatDisabled][ET.PERMANENT]
+  assert on.audible_alert == AudibleAlert.engage and off.audible_alert == AudibleAlert.disengage

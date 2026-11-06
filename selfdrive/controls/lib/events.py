@@ -1305,6 +1305,22 @@ FROGPILOT_EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.HIGH, VisualAlert.none, AudibleAlert.disengage, 0.8),
   },
 
+  FrogPilotEventName.pedalLatEnabled: {
+    ET.PERMANENT: Alert(
+      "Steering Engaged",
+      "",
+      AlertStatus.normal, AlertSize.small,
+      Priority.HIGH, VisualAlert.none, AudibleAlert.engage, 0.8),
+  },
+
+  FrogPilotEventName.pedalLatDisabled: {
+    ET.PERMANENT: Alert(
+      "Steering Disengaged",
+      "",
+      AlertStatus.normal, AlertSize.small,
+      Priority.HIGH, VisualAlert.none, AudibleAlert.disengage, 0.8),
+  },
+
   FrogPilotEventName.pedalUnavailable: {
     ET.WARNING: Alert(
       "Pedal Control Unavailable",

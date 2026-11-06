@@ -466,9 +466,9 @@ class Controls:
         and not self.CP.pcmCruise):
       fcs = self.sm['frogpilotCarState']
       # Long intent: OP enabled (buttonEnable / second-pull). Lat follows enabled
-      # or Always On Lateral; chimes track long edges only (NAP pedalCruise*).
+      # or the pull latch. One chime per change: long edges win over lat edges.
       long_engaged = bool(self.enabled)
-      lat_engaged = bool(self.enabled) or bool(getattr(fcs, 'alwaysOnLateralEnabled', False))
+      lat_engaged = bool(self.enabled) or bool(getattr(fcs, 'pedalCruiseLatOnly', False))
       chimes, self.prev_preap_chimes = update_preap_chimes(
         lat_engaged=lat_engaged,
         long_engaged=long_engaged,
@@ -478,6 +478,10 @@ class Controls:
         self.frogpilot_events.add(FrogPilotEventName.pedalCruiseEnabled)
       elif chimes.long_disengage:
         self.frogpilot_events.add(FrogPilotEventName.pedalCruiseDisabled)
+      elif chimes.lat_engage:
+        self.frogpilot_events.add(FrogPilotEventName.pedalLatEnabled)
+      elif chimes.lat_disengage:
+        self.frogpilot_events.add(FrogPilotEventName.pedalLatDisabled)
 
       pedal_long_active = bool(getattr(fcs, 'pedalLongActive', False))
       a_target = float(self.sm['longitudinalPlan'].aTarget) if self.sm.recv_frame.get('longitudinalPlan', -1) >= 0 else float('nan')

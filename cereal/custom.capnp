@@ -104,6 +104,8 @@ struct FrogPilotCarEvent @0x81c2f05a394cf4af {
     pedalCruiseEnabled @31;
     pedalCruiseDisabled @32;
     pedalUnavailable @33;
+    pedalLatEnabled @34;
+    pedalLatDisabled @35;
   }
 }
 
