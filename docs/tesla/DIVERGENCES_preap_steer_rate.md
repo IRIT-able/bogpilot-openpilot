@@ -55,6 +55,37 @@ Neither change touches the panda, safety, the DBC or any cereal schema. Neither 
   ceiling, checks unwinding and AP1 are untouched, and checks the limiter and the plan helper actually use the
   table they are given.
 
+### Hands-on hand-back: wait for hands below the pause level, not for an absolute 0
+
+- Platforms: AP1 and Pre-AP (the hands pause is shared, `hso.py` / `override.py`).
+- Before: the pause fires at `AP1_HANDS_ON_LEVEL` (2), but the release test demanded `EPAS_handsOnLevel == 0` —
+  in `DriverOverrideDetector.quiet` (`hands == 0 and torque < quiet_torque and rate < quiet_rate`) and in
+  `Ap1DriverYield`'s fallback (`not ap1_driver_input(hands_on_level)`, which is level >= 1). That is stricter
+  than the pause: level 1 is any driver torque the EPAS reports at all, it does not pause lateral, and openpilot
+  steers through it for most of a normal drive (`ap1_lat_active`). On logged AP1 EPAS the levels seen are 0, 1
+  and 3 only, and this file already records that 9 of 14 level 3 overrides dropped to 1 first and reached 0 up to
+  2.9 s later. So a brief nudge could cost seconds of no steering with the driver already off the wheel — the
+  same latency the resume hold was shortened for (0.8 -> 0.5 -> 0.3 s); this is the other half of it.
+- Our behavior: the release test asks for hands at or below `override.QUIET_HANDS_MAX_LEVEL`
+  (= `AP1_HANDS_ON_LEVEL - 1`), with the torque and wheel-rate checks unchanged and still required. Resuming at
+  level 1 with no torque and a still wheel is the same condition openpilot already steers in continuously, so
+  this is not a new state for the EPAS.
+- Not changed: the pause itself (the driver still wins on the frame they act), the 0.3 s hold and its
+  continuity, `ap1_lat_active`, the quiet torque / rate thresholds and their per-sensitivity scaling, the EPAS
+  gate, and the measured-angle soft-start the resume still goes through.
+- **This overrides behavior the port asserted on purpose.** Six existing tests asserted "hands flag at any level
+  keeps it not quiet"; they are updated here to the new rule. That is a deliberate behavior change, not an
+  oversight being corrected, so it is a separate commit from the rate-limit change and can be dropped on its own
+  if the dev wants the absolute 0 kept. Nothing was recorded about *why* 0 was required, and the docstrings
+  argue the other way, but the dev has the car and the EPAS logs.
+- Safety-relevant: it hands lateral back sooner after a hands-on pause, in a state (level 1, quiet torque, still
+  wheel) that is already a normal steering state for this port. It has not been driven.
+- Tests: `opendbc/car/tesla_ap1/tests/test_preap_steer_quiet_hands.py` — the two constants are checked against
+  each other (override cannot import hso), level 1 can be quiet, the pause level never is, torque and wheel rate
+  still block below the pause level, the pause threshold and `ap1_lat_active` are unchanged, the driver still
+  wins on the first frame, resume from level 1 works with and without a detector, a detector saying not-quiet
+  still blocks at level 1, and the hold length and continuity are unchanged.
+
 ### Found while checking the above, not fixed here: unwinding above the panda ceiling below 8.3 m/s
 
 `ANGLE_RATE_LIMIT_DOWN` (shared, and untouched by this change) sits above what `tesla_preap.h` allows per command

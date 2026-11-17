@@ -145,8 +145,12 @@ def test_quiet_threshold_per_level(level):
   assert not det.quiet
   det.update(True, 0, 0.0, rate, 0.0)
   assert not det.quiet
-  det.update(True, 1, 0.0, 0.0, 0.0)
-  assert not det.quiet, "hands flag at any level keeps it not quiet"
+  det.update(True, ov.QUIET_HANDS_MAX_LEVEL, 0.0, 0.0, 0.0)
+  assert det.quiet, "hands below the pause level, no torque, still wheel: released"
+  det.update(True, ov.QUIET_HANDS_MAX_LEVEL + 1, 0.0, 0.0, 0.0)
+  assert not det.quiet, "the hands level that pauses keeps it not quiet"
+  det.update(True, ov.QUIET_HANDS_MAX_LEVEL, quiet, 0.0, 0.0)
+  assert not det.quiet, "the torque and rate checks still apply below the pause level"
 
 
 @pytest.mark.parametrize("level", sorted(TABLE))
