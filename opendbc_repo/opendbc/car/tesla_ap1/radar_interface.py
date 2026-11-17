@@ -86,12 +86,14 @@ class RadarInterface(RadarInterfaceBase):
   def _preap_status_line(self, now: float, n_points: int) -> None:
     """Log-only radar status line (no UI, no control): every STATUS_S and on every change of echoed / pending / valid / fault."""
     st = self.preap_gate.status()
-    key = (st["echoed"], st["pending"], st["valid"], st["fault"], st["late"])
+    # bits and itc_state are part of the key so a change of WHICH 0x501 bit is set, or of the ITC code, is logged at
+    # once instead of waiting for the next PREAP_STATUS_S line. Neither carries a VIN or any other identifier.
+    key = (st["echoed"], st["pending"], st["valid"], st["fault"], st["late"], st["bits"], st["itc_state"])
     last_t, last_key = getattr(self, "_preap_status", (None, None))
     if last_t is None or key != last_key or now - last_t >= PREAP_STATUS_S:
       carlog.info(f"preap radar: echoed={int(st['echoed'])} pending={int(st['pending'])} valid={int(st['valid'])} "
-                  f"fault={st['fault']} late={int(st['late'])} itc={st['itc']} camera_lead={int(not st['valid'])} points={n_points} "
-                  f"faults={st['faults']}")
+                  f"fault={st['fault']} bits={st['bits']} late={int(st['late'])} itc={st['itc']}({st['itc_state']}) "
+                  f"camera_lead={int(not st['valid'])} points={n_points} faults={st['faults']}")
       self._preap_status = (now, key)
 
   def _preap_gate_step(self, can_strings, vls) -> float:

@@ -12,8 +12,18 @@ gate".
   shows, "Radar not ready – using camera lead" (event `preapRadarNotReady`, ET.WARNING only, `selfdrived/events.py:1013`;
   `ap1_events.py:78`). Never a no-entry, soft disable or disengage. Only HWFail is a radarFault (`radar_interface.py:142`; none with the Ignore radar HWFail option on, default off).
 - A returned gateway echo (flag 256) only proves we sent the config frames. Whether the radar ACCEPTED it is read from the
-  radar itself. The log-only status line (`preap radar: echoed= pending= valid= fault= late= ...`, every 5 s and on each
-  change) reports echoed, pending, valid and the fault name separately.
+  radar itself. The log-only status line (`preap radar: echoed= pending= valid= fault= bits= late= itc= ...`, every 5 s
+  and on each change) reports echoed, pending, valid and the fault name separately.
+- The status line also names WHICH 0x501 bits are set (`bits=`) and classifies the ITC code (`itc=100(unknown)`). A drive
+  on `7a683247` logged `fault=F2 ... itc=100` for 28 segments with the radar tracking 10 points throughout, and neither
+  question could be answered from the log: F2 covers eleven bits whose remedies differ (a037_vinValidity wants a donor
+  VIN, a061_radPositionMismatch / a009_configMismatch want another Radar Donor Type, a *MIA bit means the radar is not
+  getting a vehicle-data frame), and an ITC outside both ITC_OK and the F1 set holds VALID off without being a FAULT,
+  which read as a bare `valid=0`. `bits=` shows the bits that latched F2 (kept while F2 holds, since it needs two clear
+  frames to clear) plus any adjustment bits prefixed `adj:`, which keep VALID off without being a fault; `-` when none
+  are set. Both are part of the line's change key, so a change of bit or ITC code is logged at once. Diagnostics only:
+  no criterion, threshold, ITC set or control path is changed, and no VIN or other identifier is in the line.
+  Tests: `opendbc/car/tesla_ap1/tests/test_preap_radar_valid_bits.py`.
 
 ## Criteria
 From a CAN analysis of both tester packs, a 0.9.7 Pre-AP log and 67 AP1 power-ups (666 unique AP1 files). DBC:

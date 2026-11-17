@@ -36,6 +36,10 @@ the brake behavior and the no-pedal cancel; BogPilot 0.9.7 na-preap 568fea947 fo
 - "Steering only / Double pull for speed control" (`events.py` preapSteerOnly), "Speed control off / Steering only. Double pull to retry"
   (preapSpeedBlocked), "Stock cruise did not arm / Double pull again" (preapCruiseNotArmed, NAP teslaCCNotArmed parity). No text
   mentions braking or a hold: Pre-AP has no brake actuation. NAP has no steering-only banner.
+- The steering-only banner is dropped after `PREAP_STEER_ONLY_SHOW_S` (3 s) in one lateral-only stretch and re-armed when
+  lateral-only ends, so staying on steering only no longer keeps a permanent banner for the whole drive. The lateral-only
+  path colour, `LONG_OVERRIDE` and the preapSpeedBlocked / preapCruiseNotArmed warnings are unaffected; see
+  `DIVERGENCES_preap_engage_alert_lag.md`.
 - User-facing text (these alerts and PREAP_PORT.md) names the gestures "single pull" and "double pull", after the "Double-pull vs
   single-pull" section of NAP docs-nap/engagement.md:49-57 @ e99f4dc75, and leaves the timing out. NAP's doc itself describes a
   first and a second pull inside a window; the window (strict `< 400 ms`) is unchanged and stays in the table above.

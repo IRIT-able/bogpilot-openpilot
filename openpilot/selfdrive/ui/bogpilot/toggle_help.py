@@ -183,6 +183,17 @@ _add("TeslaRadarReadVin", "Pre-AP: Read Radar VIN",
      "already contain the car's own VIN.",
      when="Once after fitting a salvage radar, if the radar reports a VIN fault. Leave it alone if the radar works.",
      note="Car on, in Park, openpilot not engaged, Bosch Radar on. Engaging stops the read. Restart the car afterwards.")
+_add("TeslaRadarDonorVin", "Pre-AP: Donor VIN",
+     "The VIN the retrofit Bosch radar was learned to. From the next car start the panda puts this VIN in the records it "
+     "sends the radar, so a salvage radar sees the car it came from instead of this one and does not fault on a VIN "
+     "mismatch. Press the row to type it in: 17 letters or digits. Leave the box empty to use this car's own VIN (the "
+     "default, no substitution). This is the same stored value Read Radar VIN writes; use this row when you already know "
+     "the VIN, for example a radar you VIN-learned yourself, or when the radar will not answer a read. The VIN is shown "
+     "on this device only. It is kept out of log text, crash reports, settings and backups, but the raw radar CAN messages "
+     "in drive logs contain it, as they already contain the car's own VIN.",
+     when="If the radar reports a VIN fault and you know the VIN it was learned to.",
+     note="Shown only while Bosch Radar is on. Takes effect the next time the car starts. " + _OFFROAD,
+     default="Empty (this car)")
 _add("TeslaRadarDonorType", "Pre-AP: Radar Donor Type",
      "The car the retrofit Bosch radar came from: Model S before the facelift (the default), Model S after it, or Model X. "
      "The panda tells the radar this car type, so a salvage radar matches the car it was built for.",

@@ -34,7 +34,8 @@ PANDA_GAS_PRESSED_DBC = 650 * 0.0507968128 - 22.85856576
 # (get_longitudinal_allowed / brake_pressed). Ignore a TX-block delta in this window after a gas or brake press edge:
 # that block is the expected panda refusal, not a reason to drop speed control. Blocks outside the window still demote.
 TX_BLOCK_PRESS_IGNORE_MS = 300
-from opendbc.car.tesla_ap1.preap.cruise import SPD_CTRL_CANCEL, SPD_CTRL_MAIN, is_preap_cancel_echo, pedal_cruise_available
+from opendbc.car.tesla_ap1.preap.cruise import (SPD_CTRL_CANCEL, SPD_CTRL_MAIN, is_preap_cancel_echo,
+                                                pedal_cruise_available, remap_preap_pedal_button_type)
 from opendbc.car.tesla_ap1.preap import ibooster as IBST
 from opendbc.car.tesla_ap1.preap.engagement import Decision, PreAPEngagement, preap_epas_refusing, preap_steer_drop
 from opendbc.car.tesla_ap1.preap.params import PreApParamKeys, get_bool, set_bool, set_float  # noqa: F401
@@ -265,6 +266,21 @@ class PreApCarState(CarStateBase):
     # No pedal: no echo filter. A CANCEL that reads back only ends the session (OFF), the stricter outcome; a driver cancel
     # right after a pull is never swallowed while stock cruise is cancelled by the DI.
     cancel_edge = any(e.type == ButtonType.cancel and e.pressed for e in button_events)
+    if self.pedal_long:
+      # Pedal long (pcmCruise False): the stalk pull leaves carstate as setCruise, not resumeCruise
+      # (preap/cruise.py remap_preap_pedal_button_type, written for this and until now never called).
+      # selfdrived raises resumeBlocked, "Press Set to Engage", for a resume with no set yet
+      # (selfdrived.py:267-268: not pcmCruise and vCruise > 250 and an accel/resume edge; vCruise is
+      # V_CRUISE_UNSET 255 until the first engage, so the first pull of every drive showed it). Pre-AP
+      # pedal long has no stock set to resume to: the set is captured at engage
+      # (card.py initialize_v_cruise / capture_preap_full), as NAP does.
+      # Everything Pre-AP reads itself is taken above or off button_states, never off these types:
+      # pull_edge / cancel_edge (:255, here), the pull FSM, update_button_enable and fp_ret.resumePressed.
+      # Only what leaves carstate changes. Side effect, intended and NAP-parity: cruise.py:144 restores
+      # v_cruise_kph_last on an accelCruise / resumeCruise edge, so a re-engage now re-captures the set
+      # from ego (or the posted limit) instead of restoring the previous set.
+      for e in button_events:
+        e.type = remap_preap_pedal_button_type(e.type)
     ret.buttonEvents = button_events
 
     # The panda drops controls_allowed and the cruise latch on a permanent EPAS fault, hands on at level 3 or an EPAS refusal

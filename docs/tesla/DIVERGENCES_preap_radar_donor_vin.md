@@ -108,3 +108,26 @@ checksum); NAP nap-alpha `92b42f772` (opendbc `508d26fcb`); BogPilot na-preap `c
   (`cereal/services.py:39`, logged), and the panda consumes each one and returns it as a rejected echo in `can` (src + 0xC0;
   `panda/board/drivers/can_common.h:169-175`, `selfdrive/pandad/panda.cc:265-266`).
 - Not ported: NAP's radar VIN-learn tool (`vin_learn_radar.py`), which reprograms the radar.
+
+## 6. Donor VIN typed by hand: Vehicle Settings > "Pre-AP: Donor VIN"
+- Before: `TeslaRadarDonorVin` could only be set by the Read Radar VIN button (section 5) or over ssh, even though this
+  file and `preap/radar_donor.py` both describe the value as "17 letters or digits, entered by hand". A radar that was
+  VIN-learned somewhere else (so its F190 is not the VIN the owner needs sent), or one that will not answer the read,
+  left no way to set it on the device.
+- Now: a `button_item` row under Read Radar VIN opens the stock `Keyboard` widget
+  (`openpilot/system/ui/widgets/keyboard.py`, the same widget the screen-recording rename uses) with the saved VIN in it.
+  Confirm saves it; an empty box clears it (empty = 17 spaces = this car, no substitution). Same stored key as the read
+  button, so the two cannot disagree.
+- Validation is the same function the 0x560 stream applies, `normalize_radar_donor_vin`: upper-cased, separators dropped,
+  and it must come to exactly 17 of `A-Z0-9` or it is refused with a message and nothing is written. So a half-typed VIN
+  can never reach the radar. The box takes 24 characters so separators can be typed and normalized away.
+- Shown only on a Pre-AP car with Bosch Radar on, and editable offroad only, as Radar Donor Type: the value is read once
+  when the car starts (`interface.py` / `radar_donor.py`), so a mid-drive change would not apply anyway.
+- The VIN keeps the same handling as section 5: shown on the device only, never in a refusal string, log text, crash
+  reports, openpilot Params, backups or the settings dump; still present in raw CAN in drive logs.
+- Tests: `openpilot/selfdrive/ui/tests/test_preap_donor_vin_row.py` (visibility per car / radar / offroad, a valid VIN
+  saved, lower case and separators normalized, an empty box clearing it, short / long / bad refused with nothing written,
+  refused while the car is on or the radar is off, the reason never containing the VIN, the same key as the read button,
+  and what is saved being what the 0x560 stream accepts).
+- Divergence from NAP: NAP's equivalent setting is edited in its own config UI; this is the same stored value behind a
+  BogPilot Vehicle Settings row, with the stricter offroad-only gate.

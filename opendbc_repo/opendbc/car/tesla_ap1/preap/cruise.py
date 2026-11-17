@@ -8,6 +8,10 @@ arms controls_allowed on stalk lever==2 (not DI_cruiseState).
 """
 from __future__ import annotations
 
+from opendbc.car import structs
+
+_ButtonType = structs.CarState.ButtonEvent.Type
+
 # STW_ACTN_RQ.SpdCtrlLvr_Stat — same as NAP CruiseButtons (tesla/values.py:223-224) / DBC
 SPD_CTRL_CANCEL = 1  # FWD — push away
 SPD_CTRL_MAIN = 2    # RWD — pull toward driver (engage)
@@ -24,11 +28,13 @@ def remap_preap_pedal_button_type(event_type):
   Shared BUTTONS keep SpdCtrl=2 as resumeCruise for AP1 pcmCruise resume.
   Pre-AP pedal uses setCruise so buttonEnable initializes v_cruise from ego
   (resumeCruise alone would hit resumeBlocked: "Press Set to Engage").
+
+  Called by PreApCarState on every button event it publishes, so it uses the
+  opendbc structs enum (the one the events are built from) and imports nothing
+  per call; opendbc never imports cereal.
   """
-  from cereal import car
-  ButtonType = car.CarState.ButtonEvent.Type
-  if event_type == ButtonType.resumeCruise:
-    return ButtonType.setCruise
+  if event_type == _ButtonType.resumeCruise:
+    return _ButtonType.setCruise
   return event_type
 
 # Echo windows (NAP preap/engagement.py:9-10,189-190): suppress SpdCtrl CANCEL that is our own

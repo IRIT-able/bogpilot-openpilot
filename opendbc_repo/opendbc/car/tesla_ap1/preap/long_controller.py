@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 
 from pathlib import Path
 from opendbc.car.tesla_ap1.preap.accel_limits import get_preap_accel_limits
@@ -20,6 +21,7 @@ from opendbc.car.tesla_ap1.preap.pedal_authority import (
   RegenDecelMonitor,
 )
 from opendbc.car.tesla_ap1.preap.pedal_can import create_pedal_command
+from opendbc.car.tesla_ap1.preap.pedal_feedback import PedalFeedback
 from opendbc.car.tesla_ap1.preap.pedal_controller import (
   di_to_pedal,
   get_zero_torque,
@@ -30,6 +32,8 @@ from opendbc.car.tesla_ap1.preap.virtual_das import VirtualDAS
 _log = logging.getLogger("preap.long")
 
 PERSONALITY_PATHS = (Path("/data/params_bogpilot/LongitudinalPersonality"), Path("/data/params/d/LongitudinalPersonality"))
+# How often the stored personality is re-read, off the engage edge (see PreAPLongController._personality_refresh).
+PERSONALITY_REFRESH_S = 2.0
 
 
 class PreAPLongController:
@@ -49,6 +53,11 @@ class PreAPLongController:
     self.regen_decel_monitor = RegenDecelMonitor()
     self.pedal_counter = pedal_counter
     self._pedal_bus_fn = pedal_bus_fn
+    # Driving Personality, cached. _personality() stats and reads up to two /data files, and it used to run on the
+    # pedal ACQUIRE edge, inside card's 100 Hz step: exactly the frame that must not be slow. Primed here (card
+    # start, offroad) and refreshed from update() only on frames that are NOT acquiring, so the edge reads memory.
+    self._personality_cache = self._personality_read()
+    self._personality_read_mono = 0.0
 
   @staticmethod
   def _fsm_full(CS) -> bool:
@@ -89,9 +98,11 @@ class PreAPLongController:
     except Exception:
       pass
 
-  def _personality(self) -> int:
+  def _personality_read(self) -> int:
     """Driving Personality (0 aggressive, 1 standard, 2 relaxed). opendbc cannot read Params, so this
-    reads the stored value as a file (the same pattern as toggles.disable_openpilot_long). Default 1."""
+    reads the stored value as a file (the same pattern as toggles.disable_openpilot_long). Default 1.
+
+    Touches /data: call it from _personality_refresh(), never from the engage edge."""
     for p in PERSONALITY_PATHS:
       try:
         if p.is_file():
@@ -99,6 +110,22 @@ class PreAPLongController:
       except (OSError, ValueError):
         continue
     return 1
+
+  def _personality_refresh(self) -> None:
+    """Re-read the stored personality at most every PERSONALITY_REFRESH_S. Called only on frames that are not
+    taking pedal authority, so the file IO never lands on the ACQUIRE edge. A read error keeps the last value."""
+    now = time.monotonic()
+    if now - self._personality_read_mono < PERSONALITY_REFRESH_S:
+      return
+    self._personality_read_mono = now
+    try:
+      self._personality_cache = self._personality_read()
+    except Exception:
+      pass
+
+  def _personality(self) -> int:
+    """The cached personality. No file IO: see _personality_refresh()."""
+    return int(self._personality_cache)
 
   def update(self, CC, CS, frame, *, long_ok: bool, now_nanos: int = 0):
     """Append pedal CAN frames for this control step. Returns can_sends list."""
@@ -153,12 +180,15 @@ class PreAPLongController:
       ) # a failed acquisition no longer blocks the request; the authority retries with back-off while it is asked for
       feedback = getattr(CS, "pedal", None)
       if feedback is None:
-        # Should be wired by carstate; fail soft to inactive.
-        from opendbc.car.tesla_ap1.preap.pedal_feedback import PedalFeedback
+        # Should be wired by carstate; fail soft to inactive. Imported at module scope, not here: this branch
+        # first runs inside card's 100 Hz step, and a first-time module import there is a step overrun.
         feedback = PedalFeedback()
         CS.pedal = feedback
 
       pedal_action = self.pedal_authority.update(authority_requested, feedback)
+      if pedal_action != PedalCommandAction.ACQUIRE:
+        # Keep the stored personality fresh on ordinary frames, so the ACQUIRE edge below reads memory.
+        self._personality_refresh()
       if not authority_requested and getattr(CS, "pedal_unavailable", False):
         CS.pedal_unavailable = False          # nothing is asking for the pedal any more: drop the retry state and its alert
         CS.pedal_fail_cause = 0

@@ -29,6 +29,13 @@ RADAR_DONOR_TYPE_NAMES = ("Model S pre-facelift", "Model S facelift", "Model X")
 RADAR_READ_VIN_TITLE = "Pre-AP: Read Radar VIN"
 RADAR_READ_VIN_DESCRIPTION = ("Reads the VIN stored in the retrofit radar (read only) and saves it as the donor VIN, used from the next car start. "
                               "Car on, in Park, not engaged.")
+RADAR_DONOR_VIN = "TeslaRadarDonorVin"
+RADAR_DONOR_VIN_TITLE = "Pre-AP: Donor VIN"
+RADAR_DONOR_VIN_DESCRIPTION = ("The VIN the retrofit radar was learned to. Press to type it in; the panda shows the radar that VIN from the next car "
+                               "start. Leave it empty to use this car's own VIN. Use this instead of Read Radar VIN when you already know the VIN, for "
+                               "example a radar you VIN-learned yourself.")
+RADAR_DONOR_VIN_PROMPT = "Donor VIN"
+RADAR_DONOR_VIN_BAD = "A VIN is 17 letters or digits. Clear the box instead to use this car's own VIN."
 TITLES = {LONG: "Disable openpilot Longitudinal Control",
           CLUSTER: "Tesla AP1: Dash Cluster Integration",
           REGEN: "Tesla AP1: Earlier, Gentler Regen Stops",
@@ -132,7 +139,7 @@ class VehicleSettings:
       # Hidden: the radar position now comes from Radar Donor Type (NAP NAPRadarPosition), so this row has no effect.
       # The stored TeslaRadarBehindNosecone value is kept as is (not deleted or migrated); it still only sets flag 128.
       return False
-    if key in (RADAR_READ_VIN, RADAR_DONOR_TYPE):
+    if key in (RADAR_READ_VIN, RADAR_DONOR_TYPE, RADAR_DONOR_VIN):
       from opendbc.car.tesla_ap1.preap import params as preap_params
       return is_preap(cp) and preap_params.get_bool(RADAR)
     if key in (BUILD_INFO, PANDA_FIRMWARE):
@@ -146,6 +153,35 @@ class VehicleSettings:
     if key == PEDAL_CALIBRATE:
       return self.visible(key) and self.calibrate_allowed()
     return self.visible(key) and bool(self.offroad())
+
+  # ---- Pre-AP Donor VIN typed by hand (opendbc tesla_ap1/preap/radar_donor.py) ----
+  def set_donor_vin(self, text):
+    """Save a hand-typed donor VIN. Returns None on success, or the reason it was refused.
+
+    Empty / separators only clears it (empty = 17 spaces = this car, no substitution). Anything else must normalize to a
+    17-character VIN, the same check the 0x560 stream applies, so a half-typed VIN can never reach the radar. Offroad
+    only, as Radar Donor Type: the value is read once when the car starts. The VIN itself is never logged or returned
+    in a reason string.
+    """
+    if not self.enabled(RADAR_DONOR_VIN):
+      return "Turn on Bosch Radar first, with the car off." if not self.visible(RADAR_DONOR_VIN) else "Turn the car off first."
+    from opendbc.car.tesla_ap1.preap import params as preap_params
+    from opendbc.car.tesla_ap1.preap.radar_donor import normalize_radar_donor_vin
+    raw = "" if text is None else str(text)
+    if not any(ch.isalnum() for ch in raw):
+      preap_params.set_str(preap_params.PreApParamKeys.RADAR_DONOR_VIN, "")
+      return None
+    vin = normalize_radar_donor_vin(raw)
+    if not vin:
+      return RADAR_DONOR_VIN_BAD
+    preap_params.set_str(preap_params.PreApParamKeys.RADAR_DONOR_VIN, vin)
+    return None
+
+  def donor_vin_stored(self):
+    """The saved donor VIN as stored, or "" — the starting text for the keyboard. Device UI only."""
+    from opendbc.car.tesla_ap1.preap import params as preap_params
+    from opendbc.car.tesla_ap1.preap.radar_donor import normalize_radar_donor_vin
+    return normalize_radar_donor_vin(preap_params.get_str(preap_params.PreApParamKeys.RADAR_DONOR_VIN))
 
   # ---- Pre-AP Read Radar VIN (opendbc tesla_ap1/preap/radar_vin_read.py) ----
   def read_vin_blocked(self, started, engaged):
@@ -296,6 +332,7 @@ def create_vehicle_settings_layout(params=None):
   from openpilot.system.ui.lib.multilang import tr
   from openpilot.system.ui.widgets import DialogResult, Widget
   from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog, alert_dialog
+  from openpilot.system.ui.widgets.keyboard import Keyboard
   from openpilot.system.ui.widgets.list_view import toggle_item
   from openpilot.system.ui.widgets.scroller_tici import Scroller
   from openpilot.selfdrive.ui.bogpilot.toggle_help import attach_help
@@ -338,6 +375,13 @@ def create_vehicle_settings_layout(params=None):
                                         callback=self.model.next_donor_type, enabled=lambda: self.model.enabled(RADAR_DONOR_TYPE))
       attach_help(self.donor_type_row, RADAR_DONOR_TYPE)
       self.rows[RADAR_DONOR_TYPE] = self.donor_type_row
+      # Donor VIN typed by hand. The action text is the saved VIN (device only), so the row shows at a glance
+      # what the radar will be told without opening the help.
+      self.donor_vin_row = button_item(lambda: tr(RADAR_DONOR_VIN_TITLE), lambda: self.model.donor_vin_text().upper(),
+                                       lambda: tr(RADAR_DONOR_VIN_DESCRIPTION),
+                                       callback=self.edit_donor_vin, enabled=lambda: self.model.enabled(RADAR_DONOR_VIN))
+      attach_help(self.donor_vin_row, RADAR_DONOR_VIN)
+      self.rows[RADAR_DONOR_VIN] = self.donor_vin_row
       # An empty or short page says why (no car / wrong car / longitudinal control off) instead of showing nothing.
       from openpilot.selfdrive.ui.bogpilot import menu_locks
       from openpilot.selfdrive.ui.bogpilot.vehicle_settings import disable_long_effective
@@ -389,6 +433,34 @@ def create_vehicle_settings_layout(params=None):
             gui_app.push_widget(alert_dialog(tr(later)))
       gui_app.push_widget(ConfirmDialog(tr("Read the VIN stored in the radar? Read only: nothing is written to the radar."),
                                         tr("Read"), callback=confirmed))
+
+    def edit_donor_vin(self):
+      """Donor VIN pressed: a keyboard with the saved VIN in it. Confirm saves it, an empty box clears it.
+
+      Refused with a reason while the car is on or the radar is off (the value is read once at car start). The guards
+      are rechecked in the model when the keyboard closes, so a car that starts while the keyboard is open cannot
+      change the radar contract mid-drive.
+      """
+      reason = None if self.model.enabled(RADAR_DONOR_VIN) else (
+        "Turn on Bosch Radar first, with the car off." if not self.model.visible(RADAR_DONOR_VIN) else "Turn the car off first.")
+      if reason:
+        gui_app.push_widget(alert_dialog(tr(reason)))
+        return
+
+      keyboard = Keyboard(max_text_size=24, min_text_size=0)   # 17 VIN characters, plus room for typed separators
+      keyboard.set_title(tr(RADAR_DONOR_VIN_PROMPT))
+      keyboard.set_text(self.model.donor_vin_stored())
+
+      def done(result):
+        if result != DialogResult.CONFIRM:
+          return
+        refused = self.model.set_donor_vin(keyboard.text)
+        if refused:
+          gui_app.push_widget(alert_dialog(tr(refused)))
+        self.refresh()
+
+      keyboard.set_callback(done)
+      gui_app.push_widget(keyboard)
 
     def set_value(self, key, state):
       if not self.model.enabled(key):

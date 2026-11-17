@@ -273,8 +273,28 @@ class PreapEngageSetLimit:
     fp = str(getattr(CP, "carFingerprint", "") or "")
     self.active = (fp == "TESLA_PREAP_MODELS" and not bool(getattr(CP, "pcmCruise", True))
                    and slc_supported(CP))
+    # Snapshot of (toggles, adopted), refreshed off card's 100 Hz step (card.params_thread calls refresh()).
+    # kph() runs on the engage / FULL-capture edge inside that step; reading the toggles there meant the lazy
+    # imports below, a ParamStore (and its first all_keys()) and dozens of param reads landed on the engage
+    # frame. None (no refresh yet) falls back to reading inline, so tests and any other caller still work.
+    self._snapshot = None
 
-  def _toggles(self):
+  def refresh(self) -> bool:
+    """Read the toggles now and keep them for kph(). Call this off the control step (card's params thread, and
+    once at card start while offroad, the same warm-up warm_engage_helpers does for the AP1 helpers).
+
+    Returns whether the snapshot was taken. Never raises: a param problem leaves the previous snapshot in place
+    and kph() keeps its own fail-closed 0.0 fallback.
+    """
+    if not self.active:
+      return False
+    try:
+      self._snapshot = self._read_toggles()
+      return True
+    except Exception:
+      return False
+
+  def _read_toggles(self):
     if self._toggles_fn is not None:
       t = self._toggles_fn()
     else:
@@ -286,6 +306,10 @@ class PreapEngageSetLimit:
       t = onroad_toggles(self._store, self.CP)
     adopted = bool(self._adopted_fixed) if self._adopted_fixed is not None else slc_adopted(self._store)
     return t, adopted
+
+  def _toggles(self):
+    snap = self._snapshot
+    return snap if snap is not None else self._read_toggles()
 
   def kph(self, CS, limit_ms) -> float:
     if not self.active:
@@ -930,21 +954,28 @@ class EngageTapFromZero:
     return float(self()) * KPH_TO_MS
 
 
-def warm_engage_helpers(offset_fn=None, tap_fn=None) -> None:
+def warm_engage_helpers(*helpers) -> None:
   """Card start: run the engage-set helpers once while offroad, so their lazy imports, the ParamStore
   and the first param reads happen here instead of on the first engage frame inside card's 100 Hz loop.
+
+  Takes any number of helpers (AP1: the offset and tap-from-zero helpers; Pre-AP: PreapEngageSetLimit).
 
   Without this the first engage after boot stalled card for ~145 ms (seen in saved logs of two earlier builds), the next
   carOutput was invalid and selfdrived raised commIssue; the second press then engaged. Failure-tolerant:
   any error is swallowed so a param read problem can never block card start (the helpers already fall
   back to 0 offset / 15 mph on their own).
   """
-  for fn in (offset_fn, tap_fn):
+  for fn in helpers:
     if fn is None:
       continue
     try:
+      # A helper that keeps a snapshot (PreapEngageSetLimit) is warmed by filling it, so the engage frame
+      # reads memory; the others just need their first call done here.
+      refresh = getattr(fn, "refresh", None)
       warm = getattr(fn, "_toggles", None)
-      if callable(warm):
+      if callable(refresh):
+        refresh()
+      elif callable(warm):
         warm()
       else:
         fn()

@@ -60,6 +60,25 @@ ALERT_BITS = F2_BITS + ADJUST_BITS
 FAULT_ORDER = ("F4", "F1", "F2", "F3", "NO_ECHO")
 
 
+def short_bit(name: str) -> str:
+  """RADC_a037_vinValidity -> vinValidity, for the status line (the DBC names are too long to read in a log)."""
+  parts = str(name).split("_", 2)
+  return parts[-1] if len(parts) == 3 else str(name)
+
+
+def itc_state(itc) -> str:
+  """ok / fault / unknown for the status line. The ITC values are only partly characterised: ITC_OK and ITC_FAULT are
+  the ones the CAN analysis covered, and anything else leaves the gate not VALID without being a FAULT (so PENDING),
+  which read as a bare valid=0 in the log with no way to tell an unknown code from an aligning radar."""
+  if itc is None:
+    return "none"
+  if itc in ITC_OK:
+    return "ok"
+  if itc in ITC_FAULT:
+    return "fault"
+  return "unknown"
+
+
 class RadarValidGate:
   def __init__(self, radar_emulation: bool, frozen_s: float = FROZEN_S,
                frozen_min_points: int = FROZEN_MIN_POINTS, frozen_gated: bool = FROZEN_GATED):
@@ -75,6 +94,12 @@ class RadarValidGate:
     self.alert_clean = False                  # last 0x501 clear of ALERT_BITS
     self.f2_run = 0                           # consecutive 0x501 frames with F2 bits (>0) or clear (<0)
     self.f2 = False
+    # Which bits are set, for the log-only status line. "F2" alone says a 0x501 alert bit latched but not which one,
+    # and the remedies differ per bit: vinValidity wants a donor VIN, radPositionMismatch / configMismatch want
+    # another Radar Donor Type, a *MIA bit means the radar is missing a vehicle-data frame.
+    self.f2_bits: tuple = ()                  # F2 bits in the last 0x501 frame
+    self.f2_bits_latched: tuple = ()          # F2 bits that latched F2, kept while F2 is on
+    self.adjust_bits: tuple = ()              # ADJUST_BITS in the last 0x501 frame (these hold VALID off without being a FAULT)
     self.slots: dict[int, deque] = {}
     self.last_move: float | None = None
     self.sig = None
@@ -97,14 +122,19 @@ class RadarValidGate:
 
   def on_alert_matrix(self, now: float, vl) -> None:
     """One new 0x501 frame (parser values)."""
-    bad = any(bool(vl[b]) for b in F2_BITS)
+    self.f2_bits = tuple(b for b in F2_BITS if bool(vl[b]))
+    self.adjust_bits = tuple(b for b in ADJUST_BITS if bool(vl[b]))
+    bad = bool(self.f2_bits)
     self.alert_seen = True
-    self.alert_clean = not bad and not any(bool(vl[b]) for b in ADJUST_BITS)
+    self.alert_clean = not bad and not self.adjust_bits
     self.f2_run = (max(self.f2_run, 0) + 1) if bad else (min(self.f2_run, 0) - 1)
     if self.f2_run >= F2_FRAMES:
       self.f2 = True
     elif self.f2_run <= -F2_FRAMES:
       self.f2 = False
+    # Keep the bits that latched F2 while it is on: F2 needs 2 clear frames to clear, so the last frame can
+    # already be clear while the fault still holds.
+    self.f2_bits_latched = (self.f2_bits or self.f2_bits_latched) if self.f2 else ()
 
   def on_sgu(self, now: float, itc: int, sgu_fail: bool, hw_fail: bool, dirty: bool) -> None:
     """One 0x301 frame."""
@@ -178,7 +208,14 @@ class RadarValidGate:
   def pending(self) -> bool:
     return not self.valid and self.fault is None
 
+  def bits_text(self) -> str:
+    """The set 0x501 bits for the log-only status line: the F2 bits (latched ones while F2 is on) and, prefixed with
+    "adj:", the adjustment bits, which keep VALID off without being a FAULT. "-" when none are set."""
+    f2 = self.f2_bits_latched or self.f2_bits
+    names = [short_bit(b) for b in f2] + ["adj:" + short_bit(b) for b in self.adjust_bits]
+    return ",".join(names) if names else "-"
+
   def status(self) -> dict:
     """For the log-only status line."""
     return dict(echoed=self.echoed, pending=self.pending, valid=self.valid, fault=self.fault or "-", late=self.late,
-                itc=self.itc, faults=self.faults)
+                itc=self.itc, itc_state=itc_state(self.itc), bits=self.bits_text(), faults=self.faults)

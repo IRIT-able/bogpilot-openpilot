@@ -35,11 +35,23 @@ PREAP_CC_NOT_ARMED = "preapCruiseNotArmed"
 # uses camera leads. The one radar warning; advisory, as NAP / Tinkla (no no-entry, soft disable or disengage).
 PREAP_RADAR_NOT_READY = "preapRadarNotReady"
 INHIBIT_ALERT_FRAMES = int(1.0 / DT_CTRL)  # ~1 s at 100 Hz
+# How long the "Steering only / Double pull for speed control" banner stays up in one lateral-only stretch.
+# It is a PERMANENT alert (events.py preapSteerOnly), so without this it sat on the screen for the whole drive
+# when the driver chose to stay on steering only. Long enough to read once: it says what mode you are in and what
+# the second pull does, and neither changes while you stay in this mode. After the timeout the banner is dropped,
+# but nothing about the state is hidden: the lateral-only path colour stays (ui/onroad/model_renderer.py
+# preap_steer_only reads carState.bogpilot.preapLatOnly, not this event), LONG_OVERRIDE below still keeps
+# carControl.longActive off, and the actionable warnings (PREAP_SPEED_BLOCKED / PREAP_CC_NOT_ARMED) are never
+# timed out. The timer restarts whenever lateral-only ends (a disengage, or FULL), so the banner is shown again
+# on the next first pull.
+PREAP_STEER_ONLY_SHOW_S = 3.0
+PREAP_STEER_ONLY_FRAMES = int(PREAP_STEER_ONLY_SHOW_S / DT_CTRL)
 
 
 class Ap1Events:
   def __init__(self):
     self.inhibit_alert_frames = 0
+    self.steer_only_frames = 0        # frames the steering-only banner has been shown in this lateral-only stretch
 
   def update(self, names, enabled: bool, lat_active: bool, bogpilot, steer_fault_permanent: bool = False) -> list[str]:
     """names: event names openpilot built so far. Returns the AP1 rewritten list."""
@@ -80,7 +92,12 @@ class Ap1Events:
 
     if bool(enabled) and bool(getattr(bogpilot, "preapLatOnly", False)):
       if bool(getattr(bogpilot, "preapSpeedBlocked", False)):
+        # Actionable: speed control was refused or dropped. Never timed out, and it does not advance the
+        # banner timer (it replaces the banner while it shows).
         out.append(PREAP_SPEED_BLOCKED if bool(getattr(bogpilot, "preapPedalDetected", False)) else PREAP_CC_NOT_ARMED)
-      else:
+      elif self.steer_only_frames < PREAP_STEER_ONLY_FRAMES:
+        self.steer_only_frames += 1
         out.append(PREAP_STEER_ONLY)
+    else:
+      self.steer_only_frames = 0      # lateral-only ended: the banner is shown again on the next first pull
     return out

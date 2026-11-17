@@ -12,7 +12,8 @@ from openpilot.common.params import Params
 from openpilot.common.traffic_mode_hold import TrafficModeHold
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper
 from openpilot.selfdrive.car.step_overrun import StepOverrunCounter
-from openpilot.selfdrive.car.preap_card_step import use_10hz_distance_button, use_step_overrun_counter
+from openpilot.selfdrive.car.preap_card_step import (PREAP_ENGAGE_SET_REFRESH_S, use_10hz_distance_button,
+                                                      use_step_overrun_counter)
 from openpilot.common.swaglog import cloudlog, ForwardingHandler
 
 from opendbc.car import DT_CTRL, structs
@@ -206,8 +207,15 @@ class Car:
         # per panda (safetyConfigs[i] is what pandad sets on panda i), for the host-side 0x560 gate
         self.preap_safety_expects = [(int(getattr(c.safetyModel, "raw", c.safetyModel)), int(c.safetyParam)) for c in self.CP.safetyConfigs]
     if self.CP.brand == "tesla_ap1" and self.CP.carFingerprint == "TESLA_PREAP_MODELS" and not self.CP.pcmCruise:
-      from openpilot.selfdrive.controls.lib.phase3_speed_control import PreapEngageSetLimit
+      from openpilot.selfdrive.controls.lib.phase3_speed_control import PreapEngageSetLimit, warm_engage_helpers
       self.preap_engage_set_limit = PreapEngageSetLimit(self.CP)
+      # Warm now (offroad), as the AP1 helpers below already are: PreapEngageSetLimit.kph() runs on the enable and
+      # FULL-capture edges inside the 100 Hz step, and its first call paid two lazy imports, a ParamStore (with its
+      # first all_keys()) and dozens of param reads there. Saved logs of this build show a 120 ms card step 4 ms
+      # after longActive first rose, which is enough on its own to push selfdrived's 100-sample average over the
+      # 11.11 ms Ratekeeper.lagging threshold and raise "System Lagging" (a soft disable). params_thread keeps the
+      # snapshot fresh from here on, so later engages do not read /data in the step either.
+      warm_engage_helpers(self.preap_engage_set_limit)
     self._cluster_floor = None
     if self.ap1_cluster_lift:
       from openpilot.selfdrive.controls.lib.phase3_speed_control import EngageClusterFloor
@@ -505,11 +513,19 @@ class Car:
     self.CS_prev = CS
 
   def params_thread(self, evt):
+    last_engage_set = 0.0
     while not evt.is_set():
       if use_10hz_distance_button(self.CP.carFingerprint):
         self.onroad_distance_button = self.params.get_bool("OnroadDistanceButtonPressed")
       self.is_metric = self.params.get_bool("IsMetric")
       self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
+      # Pre-AP engage set: keep the SetSpeedLimit toggles snapshot fresh here, not on the engage frame in the step.
+      # Once a second, not at 10 Hz: it is a few dozen param reads and the toggles only change in Settings.
+      if self.preap_engage_set_limit is not None:
+        now = time.monotonic()
+        if now - last_engage_set >= PREAP_ENGAGE_SET_REFRESH_S:
+          last_engage_set = now
+          self.preap_engage_set_limit.refresh()
       time.sleep(0.1)
 
   def card_thread(self):
