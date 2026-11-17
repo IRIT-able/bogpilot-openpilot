@@ -188,14 +188,19 @@ def ap1_gas_neutral(chassis_das_only, openpilot_longitudinal_control, enabled, g
   return bool(chassis_das_only) and bool(openpilot_longitudinal_control) and bool(enabled) and bool(gas_pressed)
 
 
-def _ap1_limited_angle(requested_angle_deg, last_angle_deg, measured_angle_deg, v_ego):
+def _ap1_limited_angle(requested_angle_deg, last_angle_deg, measured_angle_deg, v_ego, limits=None):
   """Rate limit, then Tinkla's +/- 20 deg clip around the measured wheel.
 
   The clip is the "to not fault the EPS" bound. It is applied after the
   speed-based rate limit. A requested angle inside that window is unchanged
   aside from the rate step.
+
+  limits: the CarControllerParams to read the rate tables from. None keeps AP1's
+  (CarControllerParams); Pre-AP passes PreApCarControllerParams, whose wind-up table is NAP's
+  lateral-jerk envelope. The +/- 20 deg clip is the same for both.
   """
-  apply_angle = apply_std_steer_angle_limits(requested_angle_deg, last_angle_deg, v_ego, CarControllerParams)
+  apply_angle = apply_std_steer_angle_limits(requested_angle_deg, last_angle_deg, v_ego,
+                                             limits if limits is not None else CarControllerParams)
   return clip(apply_angle, measured_angle_deg - 20, measured_angle_deg + 20)
 
 
@@ -241,7 +246,7 @@ def build_actuator_plan(frame, lat_active, hands_on_fault, openpilot_longitudina
                         epas_error=None, eac_fault=False, hands_on_level=0,
                         eac_status=None, soft_start=False, driver_yield=False, gas_pressed=False,
                         steer_tick=None, standby=False, steer_session=None, lat_session=None, epas_yield=False,
-                        tmp_fault_probe=False):
+                        tmp_fault_probe=False, angle_limits=None):
   """Same steering branches CarController.update had before this function existed.
 
   Disengaged lateral: no steering frame. Sending type-NONE 0x488 while
@@ -297,12 +302,12 @@ def build_actuator_plan(frame, lat_active, hands_on_fault, openpilot_longitudina
   if steer_send:
     if hold_measured:
       # Measured ANGLE: EPAS inhibit recovery, latched 6/3, a latched code 4 request, or engage soft-start.
-      apply_angle = _ap1_limited_angle(measured_angle_deg, last_angle_deg, measured_angle_deg, v_ego)
+      apply_angle = _ap1_limited_angle(measured_angle_deg, last_angle_deg, measured_angle_deg, v_ego, angle_limits)
       apply_angle_last = apply_angle
       steer = SteerCommand(apply_angle, True, steer_counter)
     elif lkas_enabled and not hands_pause:
       # Angular rate limit based on speed, then the EPS clip.
-      apply_angle = _ap1_limited_angle(requested_angle_deg, last_angle_deg, measured_angle_deg, v_ego)
+      apply_angle = _ap1_limited_angle(requested_angle_deg, last_angle_deg, measured_angle_deg, v_ego, angle_limits)
       apply_angle_last = apply_angle
       steer = SteerCommand(apply_angle, True, steer_counter)
     elif chassis_das_only and steer_enabled and not hands_on_fault:
