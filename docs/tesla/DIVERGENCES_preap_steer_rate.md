@@ -95,3 +95,44 @@ which is a plausible source of an unexplained disengage while unwinding out of s
 wind-up table had the same shape (10.0 against 8.0 at a standstill) and this change removed that half of it.
 Pinned by a test so it is noticed. Whether the table comes down or the panda goes up is a call for the dev, and it
 is deliberately not bundled into a change about wind-up authority.
+
+### An EPAS limit code must not release the wheel (the mid-corner straighten)
+
+- Platforms: Pre-AP worst, AP1 too. Pre-AP was the stricter of the two branches.
+- Reported on this build, not reproducible on NAP: halfway through a left turn the EPAS hit a torque limit, all
+  lateral control stopped, and the wheel straightened on its own — the car carried straight toward the curb. The
+  EPAS had clamped the request and was still steering. openpilot is what let go.
+- Two gates did it, both keyed on `EPAS_eacErrorCode` **regardless of `EPAS_eacStatus`**:
+  - `epas_gate.epas_not_ready`: any code outside `EAC_OK_ERRORS` (= IDLE, HANDS_ON, HIGH_ANGLE_REQ) blocks the
+    gate, and a blocked gate means `CarController` sends steering type NONE — no angle control at all, so the
+    EPAS releases and caster straightens the wheel.
+  - `steer_fault.steer_fault_temporary`: any code outside the allowed set sets `CarState.steerFaultTemporary`,
+    which is `steerTempUnavailable` and drops lateral. Pre-AP takes the `_BENIGN` branch, because
+    `is_ap1_family("TESLA_PREAP_MODELS")` is False, so on Pre-AP **every** code except IDLE and HANDS_ON did
+    this — code 6 included, stricter than AP1. The docstring attributes the rule to Tinkla
+    ("steerWarning unless the name is EAC_ERROR_IDLE"), so it predates the AP1 exceptions.
+- The codes in question are limits, not faults. `EAC_ERROR_HIGH_MMOT_SAFETY` (10) is the assist motor's torque
+  limit and `EAC_ERROR_HIGH_TORSION_SAFETY` (11) the torsion bar's: the request was larger than the EPAS would
+  act on, so it acted on as much as it would and said so. It is still steering, and holding the command finishes
+  the turn at whatever it will give.
+- NAP's rule, which this adopts: NAP Pre-AP (`opendbc tesla/preap/carstate.py:62-70`) only calls the EPAS a
+  rejection when the **status** has gone `EAC_INHIBITED` as well, and then only for the four angle/rate
+  validators (6, 7, 8, 9). The torque codes and 12 LOW_ASSIST are not in NAP's set at all. An error code alone
+  never stops NAP from commanding — the status does.
+- Our behavior: `steer_fault.EAC_LIMIT_ERRORS` collects codes 5-12, and both gates treat them as clean. The
+  status check is untouched in both: `EAC_INHIBITED` / `EAC_FAULT` / `EAC_SNA` still block for every code, so the
+  genuine-rejection case is unchanged and is exactly NAP's condition.
+- Deliberately still faults, because they are not "I clamped your request": 4 TMP_FAULT (latched, with its own
+  recovery in `EpasTmpFaultRecovery`, which must keep seeing it), 13 PINION_VEL_DIFF (the two angle sensors
+  disagree — an integrity fault), 14 EPB_INHIBIT, 15 SNA, and 1 MIN_SPEED / 2 MAX_SPEED (outside the EPAS's
+  speed window, where commanding achieves nothing). An unrecognised name still fails closed.
+- Supersedes part of the entry above: with this in, code 9 `HIGH_ANGLE_RATE_SAFETY` no longer blocks on its own
+  either, so the faster wind-up table's main residual risk — tripping the EPAS's own rate check and losing
+  steering for 0.3 s — now clamps instead of releasing.
+- Safety-relevant: yes, and in both directions. It keeps lateral through an EPAS limit instead of dropping it,
+  which is the point; it also means openpilot keeps commanding an EPAS that is reporting a limit. The status
+  check is what still stops it, and that is the same condition NAP uses. Not driven.
+- Tests: `opendbc/car/tesla_ap1/tests/test_preap_epas_limit_not_fault.py` — the reported torque codes block
+  neither gate while the EPAS is steering, a sustained limit never starts blocking, the whole limit family is
+  clean on both gates and both branches, a refusing status still blocks every code, the real faults and an
+  unknown name still block, and TMP_FAULT recovery still sees its code.

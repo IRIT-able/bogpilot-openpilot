@@ -25,10 +25,15 @@ reported EAC_ACTIVE in this lateral session.
 """
 import math
 from opendbc.car.tesla_ap1.override import SIGNAL_EPAS, SIGNAL_NONE
+from opendbc.car.tesla_ap1.steer_fault import EAC_LIMIT_ERRORS
 
 EAC_ACTIVE = "EAC_ACTIVE"
 EAC_BLOCKING_STATUS = ("EAC_INHIBITED", "EAC_FAULT", "EAC_SNA")
-EAC_OK_ERRORS = ("EAC_ERROR_IDLE", "EAC_ERROR_HANDS_ON", "EAC_ERROR_HIGH_ANGLE_REQ")
+# Idle, hands-on, and the codes that only mean the EPAS clamped the request while still steering
+# (steer_fault.EAC_LIMIT_ERRORS). Blocking on those sent type NONE mid-corner and the wheel self-centred.
+# The status check below is unchanged: EAC_INHIBITED / EAC_FAULT / EAC_SNA still block, which is how NAP
+# decides a real rejection (tesla/preap/carstate.py:66).
+EAC_OK_ERRORS = ("EAC_ERROR_IDLE", "EAC_ERROR_HANDS_ON") + EAC_LIMIT_ERRORS
 
 EPAS_CLEAN_FRAMES = 30   # 0.3 s at 100 Hz
 
