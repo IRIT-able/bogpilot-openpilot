@@ -19,7 +19,8 @@ import pytest
 
 from opendbc.car.tesla_ap1.epas_gate import EAC_OK_ERRORS, EpasGate, epas_not_ready
 from opendbc.car.tesla_ap1.override import SIGNAL_EPAS, SIGNAL_NONE
-from opendbc.car.tesla_ap1.steer_fault import (EAC_DRIVER_ORIGIN_ERRORS, EAC_LIMIT_ERRORS,
+from opendbc.car.tesla_ap1.preap.engagement import preap_epas_refusing
+from opendbc.car.tesla_ap1.steer_fault import (EAC_DISENGAGE_WINDOW, EAC_DRIVER_ORIGIN_ERRORS, EAC_LIMIT_ERRORS,
                                                steer_fault_temporary)
 
 # The code the reported turn hit (10), its sibling (11), and the reduced-assist code (12).
@@ -69,10 +70,51 @@ def test_no_limit_code_blocks_while_the_epas_is_still_steering(status, code):
   assert not steer_fault_temporary(code, True), code
 
 
-def test_the_limit_family_is_request_origin_only():
-  assert set(TORQUE_CODES) <= set(EAC_LIMIT_ERRORS)
-  assert {"EAC_ERROR_HIGH_ANGLE_REQ", "EAC_ERROR_HIGH_ANGLE_RATE_REQ",
-          "EAC_ERROR_HIGH_ANGLE_SAFETY"} <= set(EAC_LIMIT_ERRORS)
+def test_the_limit_family_is_only_the_two_motor_torque_codes():
+  """Narrow on purpose: see test_tolerating_a_code_must_not_remove_the_disengage."""
+  assert set(EAC_LIMIT_ERRORS) == {"EAC_ERROR_HIGH_MMOT_SAFETY", "EAC_ERROR_LOW_ASSIST"}
+
+
+# ---- the trap: tolerating a code can make the hard disengage unreachable --------------------------
+
+def test_tolerating_a_code_must_not_remove_the_disengage():
+  """The second regression driven on this build, and the subtler one.
+
+  preap_epas_refusing (the hard disengage, mirrored by tesla_preap_epas_blocking in the panda) is
+      hands_on_level >= 3 or (eac_status == INHIBITED and 6 <= eac_error_code <= 9)
+  and the EPAS only reaches INHIBITED when openpilot STOPS sending ANGLE. Blocking the gate is what stops them.
+  So tolerating 7/8/9 left the disengage intact but unreachable: the gate stayed open, ANGLE kept flowing, the
+  EPAS stayed ACTIVE, and the INHIBITED half could never become true.
+  """
+  INHIBITED = 0
+  for code_num, name in ((7, "EAC_ERROR_HIGH_ANGLE_RATE_REQ"), (8, "EAC_ERROR_HIGH_ANGLE_SAFETY"),
+                         (9, "EAC_ERROR_HIGH_ANGLE_RATE_SAFETY")):
+    # the numeric condition fires once the EPAS is inhibited ...
+    assert preap_epas_refusing(0, INHIBITED, code_num), code_num
+    # ... and it only gets there because the gate blocks and the ANGLE frames stop
+    assert name not in EAC_LIMIT_ERRORS, name
+    assert epas_not_ready("EAC_ACTIVE", name), name
+  assert set(EAC_DISENGAGE_WINDOW) <= set(EAC_DRIVER_ORIGIN_ERRORS)
+
+
+def test_code_6_is_the_documented_exception():
+  """The gate has tolerated 6 since before this work, so it never produced INHIBITED. Left exactly as it was."""
+  assert "EAC_ERROR_HIGH_ANGLE_REQ" in EAC_OK_ERRORS
+  assert "EAC_ERROR_HIGH_ANGLE_REQ" not in EAC_LIMIT_ERRORS
+  assert "EAC_ERROR_HIGH_ANGLE_REQ" not in EAC_DRIVER_ORIGIN_ERRORS
+  assert not epas_not_ready("EAC_ACTIVE", "EAC_ERROR_HIGH_ANGLE_REQ")
+
+
+def test_hands_level_3_still_disengages_on_its_own():
+  """The other half of preap_epas_refusing, untouched throughout."""
+  assert preap_epas_refusing(3, 1, 0)
+  assert not preap_epas_refusing(2, 1, 0)
+
+
+def test_a_motor_torque_limit_does_not_reach_the_disengage_window():
+  """Codes 10 and 12 are outside 6..9, so tolerating them cannot make the disengage unreachable."""
+  for code_num in (10, 12):
+    assert not preap_epas_refusing(0, 0, code_num), code_num
 
 
 # ---- the wheel-turn override, which making these codes "clean" removed -----------------------------

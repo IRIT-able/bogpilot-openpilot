@@ -33,7 +33,11 @@ EAC_BLOCKING_STATUS = ("EAC_INHIBITED", "EAC_FAULT", "EAC_SNA")
 # (steer_fault.EAC_LIMIT_ERRORS). Blocking on those sent type NONE mid-corner and the wheel self-centred.
 # The status check below is unchanged: EAC_INHIBITED / EAC_FAULT / EAC_SNA still block, which is how NAP
 # decides a real rejection (tesla/preap/carstate.py:66).
-EAC_OK_ERRORS = ("EAC_ERROR_IDLE", "EAC_ERROR_HANDS_ON") + EAC_LIMIT_ERRORS
+# Idle, hands-on and code 6 exactly as before, plus the two codes that only mean the assist motor ran out of
+# torque (steer_fault.EAC_LIMIT_ERRORS). Codes 6-9 must keep blocking here even though 6-8 are request-origin:
+# blocking is what stops the ANGLE frames, and the EPAS only reaches INHIBITED when they stop, which the hard
+# disengage in preap/engagement.py preap_epas_refusing requires. See the long note in steer_fault.py.
+EAC_OK_ERRORS = ("EAC_ERROR_IDLE", "EAC_ERROR_HANDS_ON", "EAC_ERROR_HIGH_ANGLE_REQ") + EAC_LIMIT_ERRORS
 
 EPAS_CLEAN_FRAMES = 30   # 0.3 s at 100 Hz
 

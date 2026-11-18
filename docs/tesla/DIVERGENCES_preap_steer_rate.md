@@ -119,8 +119,9 @@ is deliberately not bundled into a change about wind-up authority.
   rejection when the **status** has gone `EAC_INHIBITED` as well, and then only for the four angle/rate
   validators (6, 7, 8, 9). The torque codes and 12 LOW_ASSIST are not in NAP's set at all. An error code alone
   never stops NAP from commanding — the status does.
-- Our behavior: `steer_fault.EAC_LIMIT_ERRORS` collects the **request-origin** codes only — 6, 7, 8, 10, 12 — and
-  both gates treat those as clean. The status check is untouched in both: `EAC_INHIBITED` / `EAC_FAULT` /
+- Our behavior: `steer_fault.EAC_LIMIT_ERRORS` is **only codes 10 and 12**, the assist-motor torque limit and
+  reduced assist. The effective tolerated sets are exactly the base build's plus those two, verified by diffing
+  them against `bogpilot-tesla-fix`: nothing was removed anywhere. The status check is untouched in both: `EAC_INHIBITED` / `EAC_FAULT` /
   `EAC_SNA` still block for every code, so the genuine-rejection case is unchanged and is exactly NAP's condition.
 - **The driver-origin codes stay blocking, and the first cut of this change got that wrong.** Blocking is what
   sets `EpasGate.signal = SIGNAL_EPAS` and `steerFaultTemporary`, and that pair *is* the wheel-turn override. A
@@ -136,6 +137,31 @@ is deliberately not bundled into a change about wind-up authority.
     here the code alone keeps blocking, which is the more cautious of the two.
   - **5 `MAX_STEER_DELTA`** — `_ap1_limited_angle` already clips the command to the measured wheel +/- 20 deg, so
     openpilot's own request cannot open a gap that large: the wheel was moved.
+
+### And a second regression on top of that one: tolerating a code can make the hard disengage unreachable
+
+The first correction above restored codes 5, 9 and 11 but left 6, 7 and 8 tolerated as "request-origin". Driven on
+this build, turning the wheel *still* did not hand over. The reason is not the override signal at all:
+
+The hard disengage is `preap/engagement.py preap_epas_refusing`, mirrored by `tesla_preap_epas_blocking` in the
+panda, and it is written in **numeric** terms, so nothing in `steer_fault.py` feeds it directly:
+
+    hands_on_level >= 3 or (eac_status == INHIBITED and 6 <= eac_error_code <= 9)
+
+The EPAS only reaches `INHIBITED` when openpilot **stops sending ANGLE** — "EAC_INHIBITED is the normal Pre-AP
+idle state" (NAP `tesla/preap/carstate.py:56`) — and blocking the gate is what stops those frames. So tolerating
+7, 8 and 9 left the disengage perfectly intact and permanently unreachable: the gate stayed open, ANGLE kept
+flowing, the EPAS stayed ACTIVE, and the INHIBITED half of that condition could never become true. The disengage
+was not broken; its precondition was removed.
+
+Codes 7, 8 and 9 therefore keep blocking even though 7 and 8 are request-origin. Code 6 is the exception and is
+left exactly as it was: `EAC_OK_ERRORS` has tolerated it since before this work, so it never produced INHIBITED
+and never contributed to the disengage. What is left tolerated is 10 and 12 only — both outside the 6..9 window,
+so neither can repeat the trap, which a test asserts directly.
+
+The lesson for anyone editing these sets: a code's *origin* (request vs driver) is not sufficient to decide
+whether it is safe to tolerate. Tolerating a code also suppresses the ANGLE-frame pause, and other safety
+behaviour is keyed on that pause happening.
 - Deliberately still faults, because they are not "I clamped your request": 4 TMP_FAULT (latched, with its own
   recovery in `EpasTmpFaultRecovery`, which must keep seeing it), 13 PINION_VEL_DIFF (the two angle sensors
   disagree — an integrity fault), 14 EPB_INHIBIT, 15 SNA, and 1 MIN_SPEED / 2 MAX_SPEED (outside the EPAS's
