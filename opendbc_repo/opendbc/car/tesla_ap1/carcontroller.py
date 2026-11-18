@@ -26,7 +26,7 @@ from opendbc.car.tesla_ap1.steer_counter import Ap1SteerCounterSync
 from opendbc.car.tesla_ap1.teslacan import TeslaCAN
 from opendbc.car.tesla_ap1.slc_raise import cruise_set_mph
 from opendbc.car.tesla_ap1.toggles import enable_ic_integration
-from opendbc.car.tesla_ap1.values import DBC, CANBUS, CAR, TeslaAp1SafetyFlags, is_ap1_family
+from opendbc.car.tesla_ap1.values import DBC, CANBUS, CAR, TeslaAp1SafetyFlags, is_ap1_family, PreApCarControllerParams
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 AudibleAlert = structs.CarControl.HUDControl.AudibleAlert
@@ -193,6 +193,8 @@ class CarController(CarControllerBase):
       driver_yield=driver_yield,
       epas_yield=epas_yield,
       tmp_fault_probe=tmp_fault_probe,
+      # Pre-AP winds up on NAP's lateral-jerk envelope (values.PreApCarControllerParams); AP1 keeps its own table.
+      angle_limits=None if ap1 else PreApCarControllerParams,
       lat_session=lat_session if ap1 else None,
       # AP1: neutral DAS_control while the driver presses the accelerator.
       gas_pressed=bool(getattr(CS.out, "gasPressed", False)) if ap1 else False,

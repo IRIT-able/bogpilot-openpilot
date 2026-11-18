@@ -28,7 +28,7 @@ Override Sensitivity (a driver setting, levels 1 to 5, default 2) scales the tor
 override_thresholds(). The shipped default is 2 (DIVERGENCES.md), one step firmer than 3: 2.25 Nm instead of 2.0 Nm. The hands flag,
 the angle error signal, the debounce frame counts, the hold before resuming and the panda limits do not change with it.
 
-`quiet` is the release test used for the hand-back: no hands flag, torque and
+`quiet` is the release test used for the hand-back: hands below the pause level (QUIET_HANDS_MAX_LEVEL), torque and
 wheel rate both low. The numbers were chosen from logged engaged Model S driving
 so that normal driving does not trigger them. Model X and Pre-AP use the same
 signals and the same numbers; neither has engaged logs yet, so the numbers are
@@ -71,6 +71,18 @@ OVERRIDE_ERROR_FRAMES = 2         # 20 ms
 # Release: below all of these, with the hands flag at 0.
 QUIET_TORQUE_NM = 1.0
 QUIET_RATE_DPS = 30.0
+# Highest EPAS_handsOnLevel that can still count as released. The pause fires at hso.AP1_HANDS_ON_LEVEL (2), so
+# this is that threshold minus one: the hand-back asks for hands *below the level that would pause*, not for an
+# absolute 0. Level 1 is any driver torque the EPAS reports at all; it does not pause lateral and openpilot steers
+# through it for most of a normal drive (hso.ap1_lat_active), so demanding 0 to come back made the release test
+# stricter than the pause test. On logged AP1 EPAS the levels seen are 0, 1 and 3 only, and 9 of 14 level 3
+# overrides dropped to 1 first and reached 0 up to 2.9 s later: a brief nudge cost seconds of no steering while
+# the driver was already off the wheel. The substantive checks are unchanged and still have to pass -- torque
+# under quiet_torque_nm and wheel rate under quiet_rate_dps -- so a driver still leaning on or turning the wheel
+# does not get the command back, and the pause itself is untouched: the driver still wins on the frame they act.
+# hso.AP1_HANDS_ON_LEVEL is not imported here because hso imports this module (test_preap_steer_quiet_hands
+# keeps the two in step).
+QUIET_HANDS_MAX_LEVEL = 1
 
 
 # ---- Override Sensitivity ---------------------------------------------------------------------
@@ -183,7 +195,7 @@ class DriverOverrideDetector:
     abs_rate = abs(rate)
     hands = int(hands_on_level or 0)
     th = self.thresholds
-    self.quiet = hands == 0 and abs_torque < th.quiet_torque_nm and abs_rate < th.quiet_rate_dps
+    self.quiet = hands <= QUIET_HANDS_MAX_LEVEL and abs_torque < th.quiet_torque_nm and abs_rate < th.quiet_rate_dps
     if not engaged:
       self._torque_frames = self._rate_frames = self._error_frames = 0
       self.signal = SIGNAL_NONE

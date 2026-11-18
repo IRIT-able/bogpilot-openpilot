@@ -111,6 +111,47 @@ class CarControllerParams:
     pass
 
 
+class PreApCarControllerParams(CarControllerParams):
+  """Pre-AP wind-up rate: NAP's lateral-jerk envelope, written out in this port's table form.
+
+  NAP limits the angle step by a lateral-jerk budget rather than a speed table
+  (opendbc lateral.py get_max_angle_delta_vm / apply_steer_angle_limits_vm):
+
+      max_curvature_rate = MAX_LATERAL_JERK / v**2            # (1/m)/s, MAX_LATERAL_JERK ~3.59
+      max_angle_delta    = deg(VM.get_steer_from_curvature(max_curvature_rate, v, 0)) * STEER_STEP * DT_CTRL
+      max_angle_delta    = min(max_angle_delta, MAX_ANGLE_RATE)
+
+  MAX_ANGLE_RATE = 5 deg per command is only the low-speed cap ("prevent a fault and for low speed comfort"),
+  not the limit that binds while driving: the jerk budget falls as 1/v**2 and is below the cap above ~5.5 m/s.
+  The values here are that expression evaluated at each breakpoint with NAP's own Tesla vehicle model
+  (slip_factor -0.000580374383851451, steer_ratio 12.0, wheelbase 2.89 -- tesla.h TESLA_STEERING_PARAMS,
+  "based off TESLA_MODEL_Y to match openpilot") and a 50 Hz command, which is Pre-AP's 0x488 rate.
+
+  Against the table this replaces, per command: 1.60 -> 5.00 at 5 m/s, 1.34 -> 2.99 at 7, 0.95 -> 1.51 at 10,
+  and 0.30 -> 0.74 at 15 m/s (34 mph), where the old table had already bottomed out. A drive on this build sat at
+  a median 15.0 m/s and its measured wheel movement passed the old limit in 1.8% of engaged command windows,
+  with a p99 demand of 0.80 deg per command against that 0.30 ceiling: the wind-up limit, not the car, was what
+  ran out in the sharpest part of a curve.
+
+  Two deliberate departures from NAP, both to avoid taking away authority the port has today:
+    - below ~3 m/s NAP's cap (5.0) is under the old table (10.0 at a standstill), and 5.0 is used. The old value
+      also sat above what this port's own panda allows there (8.0 per command, tesla_preap.h), so no reachable
+      command is lost.
+    - at 32 m/s the old 0.30 is kept where NAP's budget would give 0.24.
+  Everything between is NAP's number. Linear interpolation of a convex curve overshoots between breakpoints;
+  the breakpoints are placed so the worst overshoot against the continuous NAP budget is under 0.15 deg per
+  command, and the whole table stays inside this port's panda ceiling (angle_rate_up_lookup, min headroom
+  0.60 deg per command) so nothing here can raise a safety violation.
+
+  Unwinding is unchanged: ANGLE_RATE_LIMIT_DOWN is already at or above NAP's budget at every speed
+  (0.80 vs 0.72 at 15 m/s, 5.76 vs 2.99 at 7), so matching NAP there would only slow a return to centre.
+  AP1 keeps CarControllerParams: its 0x488 goes out at ~20 Hz on the stock DAS phase (steer_counter.py), so a
+  per-command table means a different deg/s there, and there is no NAP AP1 reference to match it to.
+  """
+  ANGLE_RATE_LIMIT_UP = AngleRateLimit(speed_bp=[0., 5., 6., 7., 8.5, 10., 13., 16., 20., 25., 32.],
+                                       angle_v=[5., 5., 4.04, 2.99, 2.06, 1.51, .93, .64, .44, .31, .3])
+
+
 class TeslaAp1SafetyFlags(IntFlag):
   # opendbc/safety/modes/tesla_ap1.h
   LONG_CONTROL = TeslaSafetyFlags.LONG_CONTROL.value

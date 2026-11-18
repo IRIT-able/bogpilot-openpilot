@@ -84,7 +84,11 @@ def test_quiet_flag():
   det = ov.DriverOverrideDetector(ov.SENSITIVITY_BASE_LEVEL)   # the module constants (level 3), not the default
   det.update(True, 0, 0.3, 4.0, 0.0)
   assert det.quiet
-  for kw in (dict(hands=1), dict(torque=1.2), dict(rate=45.0)):
+  # Hands at QUIET_HANDS_MAX_LEVEL (1) with no torque and a still wheel counts as released: level 1 never pauses
+  # lateral, so the release test is not stricter than the pause test.
+  det.update(True, ov.QUIET_HANDS_MAX_LEVEL, 0.0, 0.0, 0.0)
+  assert det.quiet
+  for kw in (dict(hands=ov.QUIET_HANDS_MAX_LEVEL + 1), dict(torque=1.2), dict(rate=45.0)):
     det.update(True, kw.get("hands", 0), kw.get("torque", 0.0), kw.get("rate", 0.0), 0.0)
     assert not det.quiet, kw
 

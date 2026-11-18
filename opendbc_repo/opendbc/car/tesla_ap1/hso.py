@@ -13,10 +13,11 @@ levels 0, 1 and 3 only (never 2), so a >= 2 steeringPressed only fired on the
 brief level 3 peaks and the border stayed green while the driver steered.
 
 The 50-frame numb period and the 15 degree handoff in HSO_module.py are
-not applied. Resume waits for Ap1DriverYield: hands back at level 0 for
+not applied. Resume waits for Ap1DriverYield: hands back below the pause level for
 AP1_RESUME_HOLD_S, then the measured-angle soft-start, if cruise is still
 enabled and EPAS is not EAC_FAULT. Code 6 and a latched
-code 3 do not block that resume. Any other non-idle name stays a steer warning.
+code 3 do not block that resume. Resume waits for hands below the pause threshold, with the torque and
+wheel-rate checks still required, not for an absolute level 0. Any other non-idle name stays a steer warning.
 """
 
 from opendbc.car.tesla_ap1.override import SIGNAL_HANDS, SIGNAL_NONE
@@ -36,6 +37,9 @@ AP1_DRIVER_INPUT_LEVEL = 1
 # (Tinkla's HSO numb period is 50 frames = 0.5 s); shortened to 0.3 s.
 # Lateral then resumes through the 300 ms measured-angle soft-start
 # (AP1_ENGAGE_SOFT_START_FRAMES).
+# The hold waits for hands below AP1_HANDS_ON_LEVEL rather than an absolute 0 (override.QUIET_HANDS_MAX_LEVEL):
+# level 1 never pauses lateral, so requiring 0 to resume was stricter than the pause itself and cost seconds
+# after a brief level 3 nudge.
 # The hold also restarts on driver torque >= 1.0 Nm or wheel rate >= 30 deg/s (override.QUIET_*),
 # so a driver still leaning on the wheel with the hands flag at 0 does not get the command back, and
 # it waits for the EPAS gate (epas_gate.py) to see a clean EPAS state. Pre-AP then blends in with
@@ -69,8 +73,8 @@ class Ap1DriverYield:
   Enters at hands_on_level >= AP1_HANDS_ON_LEVEL while enabled, or when the
   independent detector (override.DriverOverrideDetector) reports a signal; the
   first signal of a pause is kept in `signal`. Stays active until the driver has
-  been quiet for AP1_RESUME_HOLD_FRAMES in a row: by default hands_on_level 0, or
-  the detector's `quiet` (hands 0, low torque, low wheel rate) when it is passed.
+  been quiet for AP1_RESUME_HOLD_FRAMES in a row: by default hands_on_level below the pause threshold, or
+  the detector's `quiet` (hands below that threshold, low torque, low wheel rate) when it is passed.
   Any driver input restarts the count. Not enabled clears it at once, so
   disengage and re-engage are not delayed. `resumed` is true only on the step
   the hold ends, so CarController can restart the measured-angle soft-start.
@@ -90,7 +94,9 @@ class Ap1DriverYield:
       self.signal = SIGNAL_NONE
       return False
     if quiet is None:
-      quiet = not ap1_driver_input(hands_on_level)
+      # Below the level that pauses, not an absolute 0: see override.QUIET_HANDS_MAX_LEVEL. Without a detector
+      # there is no torque or wheel-rate reading to add, so this is the hands flag alone.
+      quiet = not ap1_steering_pressed(hands_on_level)
     pressed = ap1_steering_pressed(hands_on_level)
     if pressed or override_signal != SIGNAL_NONE:
       if not self.active:
