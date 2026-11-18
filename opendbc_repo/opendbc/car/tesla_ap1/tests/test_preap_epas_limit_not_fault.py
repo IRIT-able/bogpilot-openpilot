@@ -18,10 +18,14 @@ all. The status check is what decides, not the code. That is the rule these test
 import pytest
 
 from opendbc.car.tesla_ap1.epas_gate import EAC_OK_ERRORS, EpasGate, epas_not_ready
-from opendbc.car.tesla_ap1.steer_fault import EAC_LIMIT_ERRORS, steer_fault_temporary
+from opendbc.car.tesla_ap1.override import SIGNAL_EPAS, SIGNAL_NONE
+from opendbc.car.tesla_ap1.steer_fault import (EAC_DRIVER_ORIGIN_ERRORS, EAC_LIMIT_ERRORS,
+                                               steer_fault_temporary)
 
 # The code the reported turn hit (10), its sibling (11), and the reduced-assist code (12).
-TORQUE_CODES = ("EAC_ERROR_HIGH_MMOT_SAFETY", "EAC_ERROR_HIGH_TORSION_SAFETY", "EAC_ERROR_LOW_ASSIST")
+# The request-origin torque/assist codes. NOT 11 HIGH_TORSION_SAFETY: the torsion bar measures driver torque, so
+# that one is the wheel-turn override (see the driver-origin tests at the bottom).
+TORQUE_CODES = ("EAC_ERROR_HIGH_MMOT_SAFETY", "EAC_ERROR_LOW_ASSIST")
 # Codes that must STILL be faults: not "I clamped your request".
 STILL_FAULTS = ("EAC_ERROR_TMP_FAULT", "EAC_ERROR_PINION_VEL_DIFF", "EAC_ERROR_EPB_INHIBIT", "SNA",
                 "EAC_ERROR_MIN_SPEED", "EAC_ERROR_MAX_SPEED")
@@ -65,12 +69,57 @@ def test_no_limit_code_blocks_while_the_epas_is_still_steering(status, code):
   assert not steer_fault_temporary(code, True), code
 
 
-def test_the_limit_family_is_the_one_nap_tolerates_plus_the_torque_codes():
-  """NAP's four angle/rate validators, plus the torque and assist codes NAP never looks at."""
-  nap_angle_validators = {"EAC_ERROR_HIGH_ANGLE_REQ", "EAC_ERROR_HIGH_ANGLE_RATE_REQ",
-                          "EAC_ERROR_HIGH_ANGLE_SAFETY", "EAC_ERROR_HIGH_ANGLE_RATE_SAFETY"}
-  assert nap_angle_validators <= set(EAC_LIMIT_ERRORS)
+def test_the_limit_family_is_request_origin_only():
   assert set(TORQUE_CODES) <= set(EAC_LIMIT_ERRORS)
+  assert {"EAC_ERROR_HIGH_ANGLE_REQ", "EAC_ERROR_HIGH_ANGLE_RATE_REQ",
+          "EAC_ERROR_HIGH_ANGLE_SAFETY"} <= set(EAC_LIMIT_ERRORS)
+
+
+# ---- the wheel-turn override, which making these codes "clean" removed -----------------------------
+
+def test_the_two_lists_are_disjoint():
+  assert not (set(EAC_LIMIT_ERRORS) & set(EAC_DRIVER_ORIGIN_ERRORS))
+
+
+@pytest.mark.parametrize("code", EAC_DRIVER_ORIGIN_ERRORS)
+@pytest.mark.parametrize("status", STEERING_STATUSES)
+def test_a_driver_origin_code_still_blocks_the_gate(status, code):
+  """Blocking is the override: it is what sets SIGNAL_EPAS and steerFaultTemporary."""
+  assert epas_not_ready(status, code), (status, code)
+  assert code not in EAC_OK_ERRORS, code
+
+
+@pytest.mark.parametrize("code", EAC_DRIVER_ORIGIN_ERRORS)
+def test_a_driver_origin_code_still_raises_the_epas_override_signal(code):
+  g = EpasGate()
+  assert g.update(True, "EAC_ACTIVE", code) is True, code
+  assert g.signal == SIGNAL_EPAS, code
+
+
+@pytest.mark.parametrize("code", EAC_DRIVER_ORIGIN_ERRORS)
+@pytest.mark.parametrize("ap1", [True, False])
+def test_a_driver_origin_code_is_still_a_temporary_steer_fault(ap1, code):
+  """steerFaultTemporary -> steerTempUnavailable is the disengage the driver feels on a wheel turn."""
+  assert steer_fault_temporary(code, ap1), (ap1, code)
+
+
+def test_turning_the_wheel_past_the_torsion_limit_disengages():
+  """The exact regression: code 11 is driver torque, and it must not be treated as a request limit."""
+  code = "EAC_ERROR_HIGH_TORSION_SAFETY"
+  assert code in EAC_DRIVER_ORIGIN_ERRORS
+  assert code not in EAC_LIMIT_ERRORS
+  assert epas_not_ready("EAC_ACTIVE", code)
+  assert steer_fault_temporary(code, False) and steer_fault_temporary(code, True)
+  g = EpasGate()
+  assert g.update(True, "EAC_ACTIVE", code) is True
+  assert g.signal == SIGNAL_EPAS
+
+
+def test_a_limit_code_raises_no_override_signal():
+  """The other half: a motor-torque limit must not look like a driver override."""
+  g = EpasGate()
+  assert g.update(True, "EAC_ACTIVE", "EAC_ERROR_HIGH_MMOT_SAFETY") is False
+  assert g.signal == SIGNAL_NONE
 
 
 # ---- what must NOT have changed -------------------------------------------------------------------

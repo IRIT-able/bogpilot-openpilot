@@ -36,10 +36,13 @@ def test_only_idle_hands_on_and_the_limit_codes_pass_when_not_refusing(status):
   # Pinned so the set cannot drift unnoticed. The limit codes are the ones where the EPAS clamped the request and
   # kept steering; blocking on them released the wheel mid-corner. See steer_fault.EAC_LIMIT_ERRORS.
   assert set(EAC_OK_ERRORS) == {"EAC_ERROR_IDLE", "EAC_ERROR_HANDS_ON"} | {
-    "EAR_ERROR_MAX_STEER_DELTA", "EAC_ERROR_HIGH_ANGLE_REQ", "EAC_ERROR_HIGH_ANGLE_RATE_REQ",
-    "EAC_ERROR_HIGH_ANGLE_SAFETY", "EAC_ERROR_HIGH_ANGLE_RATE_SAFETY", "EAC_ERROR_HIGH_MMOT_SAFETY",
-    "EAC_ERROR_HIGH_TORSION_SAFETY", "EAC_ERROR_LOW_ASSIST",
+    "EAC_ERROR_HIGH_ANGLE_REQ", "EAC_ERROR_HIGH_ANGLE_RATE_REQ", "EAC_ERROR_HIGH_ANGLE_SAFETY",
+    "EAC_ERROR_HIGH_MMOT_SAFETY", "EAC_ERROR_LOW_ASSIST",
   }
+  # Driver-origin codes must stay out: blocking is what makes a wheel turn an override.
+  for driver_origin in ("EAR_ERROR_MAX_STEER_DELTA", "EAC_ERROR_HIGH_ANGLE_RATE_SAFETY",
+                        "EAC_ERROR_HIGH_TORSION_SAFETY"):
+    assert driver_origin not in EAC_OK_ERRORS, driver_origin
   # and the codes that are still faults
   for still_faulting in ("EAC_ERROR_TMP_FAULT", "EAC_ERROR_PINION_VEL_DIFF", "EAC_ERROR_EPB_INHIBIT", "SNA",
                          "EAC_ERROR_MIN_SPEED", "EAC_ERROR_MAX_SPEED"):

@@ -119,20 +119,37 @@ is deliberately not bundled into a change about wind-up authority.
   rejection when the **status** has gone `EAC_INHIBITED` as well, and then only for the four angle/rate
   validators (6, 7, 8, 9). The torque codes and 12 LOW_ASSIST are not in NAP's set at all. An error code alone
   never stops NAP from commanding — the status does.
-- Our behavior: `steer_fault.EAC_LIMIT_ERRORS` collects codes 5-12, and both gates treat them as clean. The
-  status check is untouched in both: `EAC_INHIBITED` / `EAC_FAULT` / `EAC_SNA` still block for every code, so the
-  genuine-rejection case is unchanged and is exactly NAP's condition.
+- Our behavior: `steer_fault.EAC_LIMIT_ERRORS` collects the **request-origin** codes only — 6, 7, 8, 10, 12 — and
+  both gates treat those as clean. The status check is untouched in both: `EAC_INHIBITED` / `EAC_FAULT` /
+  `EAC_SNA` still block for every code, so the genuine-rejection case is unchanged and is exactly NAP's condition.
+- **The driver-origin codes stay blocking, and the first cut of this change got that wrong.** Blocking is what
+  sets `EpasGate.signal = SIGNAL_EPAS` and `steerFaultTemporary`, and that pair *is* the wheel-turn override. A
+  first version put codes 5, 9 and 11 in the limit list; driven on this build, turning the wheel past the limit
+  then no longer disengaged. They are now their own list, `EAC_DRIVER_ORIGIN_ERRORS`, with module-level asserts
+  that they can never appear in either tolerated set:
+  - **11 `HIGH_TORSION_SAFETY`** — the torsion bar measures *driver* torque, not the assist motor's. This is the
+    driver fighting the wheel, and it is the code the regression was reported against. It is not a sibling of 10
+    despite both being "torque".
+  - **9 `HIGH_ANGLE_RATE_SAFETY`** — the wheel moved faster than commanded, so something else moved it. NAP uses
+    exactly this as its fast override: "FSD disengages using union of handsOnLevel (slow overrides) and high angle
+    rate faults (fast overrides, high speed)" (`opendbc tesla/carstate.py`). NAP pairs it with `EAC_INHIBITED`;
+    here the code alone keeps blocking, which is the more cautious of the two.
+  - **5 `MAX_STEER_DELTA`** — `_ap1_limited_angle` already clips the command to the measured wheel +/- 20 deg, so
+    openpilot's own request cannot open a gap that large: the wheel was moved.
 - Deliberately still faults, because they are not "I clamped your request": 4 TMP_FAULT (latched, with its own
   recovery in `EpasTmpFaultRecovery`, which must keep seeing it), 13 PINION_VEL_DIFF (the two angle sensors
   disagree — an integrity fault), 14 EPB_INHIBIT, 15 SNA, and 1 MIN_SPEED / 2 MAX_SPEED (outside the EPAS's
   speed window, where commanding achieves nothing). An unrecognised name still fails closed.
-- Supersedes part of the entry above: with this in, code 9 `HIGH_ANGLE_RATE_SAFETY` no longer blocks on its own
-  either, so the faster wind-up table's main residual risk — tripping the EPAS's own rate check and losing
-  steering for 0.3 s — now clamps instead of releasing.
+- Does **not** supersede the wind-up entry's residual risk: code 9 keeps blocking, so a command fast enough to
+  trip the EPAS's own rate check still releases for 0.3 s. That is the right trade — 9 cannot be told apart from a
+  driver yank, and for a steering system the cautious reading wins — but it means the faster table's one
+  on-car risk stands, and the first drive should still watch for it.
 - Safety-relevant: yes, and in both directions. It keeps lateral through an EPAS limit instead of dropping it,
   which is the point; it also means openpilot keeps commanding an EPAS that is reporting a limit. The status
   check is what still stops it, and that is the same condition NAP uses. Not driven.
-- Tests: `opendbc/car/tesla_ap1/tests/test_preap_epas_limit_not_fault.py` — the reported torque codes block
+- Tests: `opendbc/car/tesla_ap1/tests/test_preap_epas_limit_not_fault.py` — the request-origin torque codes block
   neither gate while the EPAS is steering, a sustained limit never starts blocking, the whole limit family is
   clean on both gates and both branches, a refusing status still blocks every code, the real faults and an
-  unknown name still block, and TMP_FAULT recovery still sees its code.
+  unknown name still block, and TMP_FAULT recovery still sees its code. Plus the override half: the two lists are
+  disjoint, every driver-origin code still blocks, still raises `SIGNAL_EPAS` and is still a temporary steer
+  fault, turning the wheel past the torsion limit disengages, and a motor-torque limit raises no override signal.
